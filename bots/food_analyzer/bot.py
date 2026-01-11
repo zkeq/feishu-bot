@@ -2,7 +2,11 @@
 饮食分析 Bot 实现
 """
 import base64
+import json
 import logging
+import re
+import requests
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from bots.base import BaseBot
@@ -27,8 +31,13 @@ class FoodAnalyzerBot(BaseBot):
 
         # 多维表格配置
         self.bitable_enabled = config.get("bitable", {}).get("enabled", False)
+        self.bitable_app_token = config.get("bitable", {}).get("app_token", "")
+        self.bitable_table_id = config.get("bitable", {}).get("table_id", "")
+        self.bitable_fields = config.get("bitable", {}).get("fields", {})
+
         if self.bitable_enabled:
             logger.info(f"[{self.name}] 多维表格集成已启用")
+            logger.info(f"[{self.name}] app_token={self.bitable_app_token}, table_id={self.bitable_table_id}")
 
     def process_messages(
         self, chat_id: str, parts: List[MessagePart], status_msg_id: Optional[str]
@@ -54,11 +63,22 @@ class FoodAnalyzerBot(BaseBot):
                 max_tokens=self.openai_max_tokens,
             )
 
-        # 如果启用了多维表格，保存数据
-        if self.bitable_enabled and self.config.get("business", {}).get("auto_save"):
-            self._save_to_bitable(result)
+        # 提取 JSON 数据
+        meal_data = self._extract_json_data(result)
 
-        return result
+        # 生成带按钮的交互式卡片
+        if meal_data and self.bitable_enabled:
+            # 更新消息为交互式卡片
+            card_content = self._build_interactive_card(result, meal_data, chat_id)
+            if status_msg_id:
+                self.client.update_message(status_msg_id, card_content)
+            return result
+        else:
+            # 如果没有启用多维表格或提取失败，返回普通格式
+            final_content = preprocess_markdown_for_feishu(result)
+            if status_msg_id:
+                self._update_status(chat_id, status_msg_id, final_content)
+            return result
 
     def _build_ai_messages(self, parts: List[MessagePart]) -> List[Dict[str, Any]]:
         """构建 AI 消息"""
@@ -117,8 +137,139 @@ class FoodAnalyzerBot(BaseBot):
         }
         self.client.update_message(message_id, content_json)
 
-    def _save_to_bitable(self, analysis_result: str) -> None:
+    def _extract_json_data(self, ai_response: str) -> Optional[Dict[str, Any]]:
+        """从 AI 响应中提取 JSON 数据"""
+        try:
+            # 使用正则表达式提取 JSON 代码块
+            pattern = r'```json\s*(\{[\s\S]*?\})\s*```'
+            matches = re.findall(pattern, ai_response)
+
+            if matches:
+                json_str = matches[-1]  # 取最后一个匹配
+                meal_data = json.loads(json_str)
+                logger.info(f"[{self.name}] 成功提取饮食数据: {meal_data}")
+                return meal_data
+            else:
+                logger.warning(f"[{self.name}] 未找到 JSON 数据块")
+                return None
+        except Exception as e:
+            logger.error(f"[{self.name}] 提取 JSON 数据失败: {e}")
+            return None
+
+    def _build_interactive_card(self, ai_response: str, meal_data: Dict[str, Any], chat_id: str) -> Dict[str, Any]:
+        """生成带按钮的交互式卡片"""
+        # 移除 JSON 代码块，只保留分析内容
+        clean_response = re.sub(r'```json[\s\S]*?```', '', ai_response).strip()
+        clean_response = preprocess_markdown_for_feishu(clean_response)
+
+        # 构建数据展示
+        data_display = (
+            f"\n\n---\n\n"
+            f"**📊 数据摘要**\n\n"
+            f"• 餐次：{meal_data.get('meal_type', '未知')}\n"
+            f"• 主餐：{meal_data.get('main_dish', '无')}\n"
+        )
+
+        if meal_data.get('snacks'):
+            data_display += f"• 小食：{meal_data['snacks']}\n"
+        if meal_data.get('drinks'):
+            data_display += f"• 饮品：{meal_data['drinks']}\n"
+
+        data_display += (
+            f"• 热量：{meal_data.get('calories', 0)} kcal\n"
+            f"• 蛋白质：{meal_data.get('protein', 0)} g\n"
+            f"• 碳水：{meal_data.get('carbs', 0)} g\n"
+            f"• 脂肪：{meal_data.get('fat', 0)} g\n"
+            f"• 评分：{meal_data.get('score', 0)}/10"
+        )
+
+        # 直接传递字典作为按钮的 value
+        return {
+            "config": {"wide_screen_mode": True},
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": clean_response + data_display}
+                },
+                {
+                    "tag": "action",
+                    "actions": [
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "📥 导入到多维表格"},
+                            "type": "primary",
+                            "value": meal_data,  # 直接传字典，不要 JSON 字符串
+                            "confirm": {
+                                "title": {"tag": "plain_text", "content": "确认导入"},
+                                "text": {"tag": "plain_text", "content": "确定要将这条饮食记录导入到多维表格吗？"}
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+    def _save_to_bitable(self, meal_data: Dict[str, Any]) -> bool:
         """保存分析结果到多维表格"""
-        # TODO: 实现多维表格保存逻辑
-        logger.info(f"[{self.name}] 保存到多维表格: {analysis_result[:50]}...")
-        pass
+        try:
+            logger.info(f"[{self.name}] 开始保存到多维表格...")
+
+            # 获取 access_token
+            token_url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+            token_response = requests.post(token_url, json={
+                "app_id": self.client.client.app_id,
+                "app_secret": self.client.client.app_secret
+            })
+
+            if token_response.status_code != 200:
+                logger.error(f"[{self.name}] 获取 access_token 失败: {token_response.text}")
+                return False
+
+            access_token = token_response.json()["tenant_access_token"]
+
+            # 构建记录数据
+            fields_mapping = self.bitable_fields
+            record_fields = {}
+
+            # 映射字段
+            if "meal_type" in meal_data and "meal_type" in fields_mapping:
+                record_fields[fields_mapping["meal_type"]] = meal_data["meal_type"]
+            if "main_dish" in meal_data and "main_dish" in fields_mapping:
+                record_fields[fields_mapping["main_dish"]] = meal_data.get("main_dish", "")
+            if "snacks" in meal_data and "snacks" in fields_mapping:
+                record_fields[fields_mapping["snacks"]] = meal_data.get("snacks", "")
+            if "drinks" in meal_data and "drinks" in fields_mapping:
+                record_fields[fields_mapping["drinks"]] = meal_data.get("drinks", "")
+            if "calories" in meal_data and "calories" in fields_mapping:
+                record_fields[fields_mapping["calories"]] = meal_data.get("calories", 0)
+            if "protein" in meal_data and "protein" in fields_mapping:
+                record_fields[fields_mapping["protein"]] = meal_data.get("protein", 0)
+            if "carbs" in meal_data and "carbs" in fields_mapping:
+                record_fields[fields_mapping["carbs"]] = meal_data.get("carbs", 0)
+            if "fat" in meal_data and "fat" in fields_mapping:
+                record_fields[fields_mapping["fat"]] = meal_data.get("fat", 0)
+            if "score" in meal_data and "score" in fields_mapping:
+                record_fields[fields_mapping["score"]] = meal_data.get("score", 0)
+            if "notes" in meal_data and "notes" in fields_mapping:
+                record_fields[fields_mapping["notes"]] = meal_data.get("notes", "")
+
+            # 添加记录
+            add_record_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.bitable_app_token}/tables/{self.bitable_table_id}/records"
+            headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+            payload = {"fields": record_fields}
+
+            logger.info(f"[{self.name}] 发送数据到多维表格: {record_fields}")
+
+            response = requests.post(add_record_url, headers=headers, json=payload)
+
+            if response.status_code == 200 and response.json().get("code") == 0:
+                logger.info(f"[{self.name}] 保存到多维表格成功")
+                return True
+            else:
+                logger.error(f"[{self.name}] 保存到多维表格失败: {response.text}")
+                return False
+
+        except Exception as e:
+            logger.error(f"[{self.name}] 保存到多维表格异常: {e}", exc_info=True)
+            return False

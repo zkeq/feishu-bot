@@ -110,19 +110,8 @@ class BotInstance:
         logger.info(f"[{self.bot_name}] ========== 开始处理批量消息 ==========")
 
         try:
-            # Bot 处理消息
+            # Bot 处理消息（Bot 内部会负责更新最终消息）
             answer = self.bot.process_messages(chat_id, parts, status_msg_id)
-
-            # 更新最终消息
-            if status_msg_id:
-                from core.utils import preprocess_markdown_for_feishu
-
-                final_content = preprocess_markdown_for_feishu(answer)
-                content_json = {
-                    "config": {"wide_screen_mode": True},
-                    "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": final_content}}],
-                }
-                self.client.update_message(status_msg_id, content_json)
 
             logger.info(f"[{self.bot_name}] ========== 批量消息处理完成 ==========")
 
@@ -139,6 +128,56 @@ class BotInstance:
                     ],
                 }
                 self.client.update_message(status_msg_id, error_content)
+
+    def handle_card_action(self, data):
+        """处理卡片交互事件（按钮点击）"""
+        from lark_oapi.event.callback.model.p2_card_action_trigger import (
+            P2CardActionTriggerResponse,
+            CallBackToast
+        )
+
+        try:
+            logger.info("=" * 60)
+            logger.info(f"[{self.bot_name}] 收到卡片交互事件")
+
+            # 获取按钮的值（应该是字典格式的 meal_data）
+            action = data.event.action
+            meal_data = action.value  # 直接是字典，不需要 JSON 解析
+
+            logger.info(f"[{self.bot_name}] 按钮数据: {meal_data}")
+
+            # 调用 bot 的保存方法
+            success = self.bot._save_to_bitable(meal_data)
+
+            # 创建响应
+            if success:
+                toast = CallBackToast()
+                toast.type = "success"
+                toast.content = "✅ 导入成功！数据已保存到多维表格"
+            else:
+                toast = CallBackToast()
+                toast.type = "error"
+                toast.content = "❌ 导入失败，请检查多维表格配置或稍后重试"
+
+            response = P2CardActionTriggerResponse()
+            response.toast = toast
+
+            logger.info(f"[{self.bot_name}] 卡片交互处理完成")
+            logger.info("=" * 60)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"[{self.bot_name}] 处理卡片交互时发生错误: {e}", exc_info=True)
+
+            # 返回错误响应
+            toast = CallBackToast()
+            toast.type = "error"
+            toast.content = f"处理失败: {str(e)}"
+
+            response = P2CardActionTriggerResponse()
+            response.toast = toast
+            return response
 
 
 class FeishuBotFramework:
@@ -262,6 +301,7 @@ class FeishuBotFramework:
                         instance.client.app_id, instance.client.app_secret
                     )
                     .register_p2_im_message_receive_v1(instance.handle_message_receive)
+                    .register_p2_card_action_trigger(instance.handle_card_action)
                     .build()
                 )
 

@@ -27,6 +27,52 @@ system_prompt: |
   2. 内容要求：
      - 语气活泼可爱易读友好，尽可能多的使用 emoji
      - 多给用户情绪价值
+     - 提供详细的营养分析和健康建议
+
+  3. **在回复的最后**，必须添加一个 JSON 数据块，格式如下：
+     ```json
+     {
+       "meal_type": "早餐/午餐/晚餐/加餐",
+       "main_dish": "主餐食物名称",
+       "snacks": "小食名称（如果有）",
+       "drinks": "饮品名称（如果有）",
+       "calories": 总热量数字(不带单位),
+       "protein": 蛋白质数字(不带单位),
+       "carbs": 碳水化合物数字(不带单位),
+       "fat": 脂肪数字(不带单位),
+       "score": 饮食评分(1-10分),
+       "notes": "简短备注"
+     }
+     ```
+
+  示例回复：
+  **营养分析** 🍜
+
+  这顿麻辣香锅看起来好诱人呀！让我帮你分析一下营养成分：
+
+  • 麻辣香锅：约 1200 kcal
+  • 米饭：约 260 kcal
+
+  总热量约：1460 kcal
+
+  **营养建议** 💡
+
+  这是一顿热量较高的餐食，建议...
+
+  ```json
+  {
+    "meal_type": "午餐",
+    "main_dish": "麻辣香锅、米饭",
+    "snacks": "",
+    "drinks": "",
+    "calories": 1460,
+    "protein": 45,
+    "carbs": 180,
+    "fat": 55,
+    "score": 6,
+    "notes": "麻辣香锅+米饭，热量偏高"
+  }
+  ```
 
 # OpenAI 配置
 openai:
@@ -40,18 +86,21 @@ batch:
 
 # 多维表格配置（可选）
 bitable:
-  enabled: false
-  app_token: ""
-  table_id: ""
-  # 记录字段映射
+  enabled: true
+  app_token: "TOb2bbzLrane2jsJl11crakMnMd"
+  table_id: "tblAkuuRpHNROXzY"
+  # 记录字段映射（字段名称必须与多维表格中的字段名称完全匹配）
   fields:
-    date: "日期"
-    meal_type: "餐次"
-    foods: "食物"
-    calories: "热量"
-    protein: "蛋白质"
-    carbs: "碳水化合物"
-    fat: "脂肪"
+    meal_type: "类型"           # 单选字段
+    main_dish: "主餐"           # 文本字段
+    snacks: "小食"              # 文本字段
+    drinks: "饮品"              # 文本字段
+    calories: "热量（kcal）"    # 数字字段
+    protein: "蛋白质（g）"      # 数字字段
+    carbs: "碳水化合物（g）"    # 数字字段
+    fat: "脂肪（g）"            # 数字字段
+    score: "饮食评分"           # 数字字段
+    notes: "备注"               # 文本字段
 
 # 业务配置
 business:

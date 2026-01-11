@@ -177,9 +177,9 @@ class AIClient:
                     logger.warning(f"处理流式响应行时出错: {e}")
                     continue
 
-            # 最后一次更新
-            if update_callback and full_content:
-                update_callback(full_content)
+            # 注意：不要在这里调用最后一次 update_callback
+            # 因为 Bot 可能需要生成交互式卡片，这里的更新会覆盖掉交互卡片
+            # Bot 会在处理完成后自行更新最终消息
 
             if not full_content:
                 raise ValueError("流式响应未返回任何内容")
