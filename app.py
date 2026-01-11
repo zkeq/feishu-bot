@@ -182,7 +182,8 @@ def main() -> None:
         .register_p2_im_message_receive_v1(handle_message_receive)
         .build()
     )
-    lark.ws_client.start(handler)
+    ws_client = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler)
+    ws_client.start()
 
 
 if __name__ == "__main__":
