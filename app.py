@@ -2,6 +2,7 @@ import base64
 import json
 import mimetypes
 import os
+import ssl
 import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -11,6 +12,7 @@ import lark_oapi as lark
 from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody, GetImageRequest
 
 import requests
+import websockets
 
 load_dotenv()
 
@@ -24,6 +26,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 BATCH_WINDOW_SECONDS = float(os.getenv("BATCH_WINDOW_SECONDS", "3"))
+INSECURE_WS = os.getenv("LARK_WS_INSECURE", "").lower() in {"1", "true", "yes"}
+
+if INSECURE_WS:
+    _original_ws_connect = websockets.connect
+
+    def _insecure_ws_connect(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs.setdefault("ssl", ssl._create_unverified_context())
+        return _original_ws_connect(*args, **kwargs)
+
+    websockets.connect = _insecure_ws_connect  # type: ignore[assignment]
 
 client = lark.Client.builder().app_id(APP_ID).app_secret(APP_SECRET).build()
 
