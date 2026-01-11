@@ -66,6 +66,19 @@ class FoodAnalyzerBot(BaseBot):
         # 提取 JSON 数据
         meal_data = self._extract_json_data(result)
 
+        # 提取原始数据（图片和附言）
+        if meal_data:
+            # 提取所有文字内容作为附言
+            user_texts = [part.text for part in parts if part.kind == "text" and part.text]
+            if user_texts:
+                meal_data["user_comment"] = " ".join(user_texts)
+
+            # 提取图片信息（保存第一张图片）
+            images = [part for part in parts if part.kind == "image" and part.image_key]
+            if images:
+                meal_data["image_key"] = images[0].image_key
+                meal_data["image_message_id"] = images[0].message_id
+
         # 生成带按钮的交互式卡片
         if meal_data and self.bitable_enabled:
             # 更新消息为交互式卡片
@@ -226,6 +239,28 @@ class FoodAnalyzerBot(BaseBot):
                 return False
 
             access_token = token_response.json()["tenant_access_token"]
+            headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+            # 先获取表格字段信息
+            fields_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.bitable_app_token}/tables/{self.bitable_table_id}/fields"
+            fields_response = requests.get(fields_url, headers=headers)
+
+            if fields_response.status_code == 200:
+                fields_info = fields_response.json()
+                logger.info(f"[{self.name}] 表格字段信息: {json.dumps(fields_info, ensure_ascii=False, indent=2)}")
+            else:
+                logger.warning(f"[{self.name}] 获取字段信息失败: {fields_response.text}")
+
+            # 处理图片上传
+            image_token = None
+            if "image_key" in meal_data and "image_message_id" in meal_data:
+                image_token = self._upload_image_to_bitable(
+                    access_token,
+                    meal_data["image_message_id"],
+                    meal_data["image_key"]
+                )
+                if image_token:
+                    logger.info(f"[{self.name}] 图片上传成功，file_token={image_token}")
 
             # 构建记录数据
             fields_mapping = self.bitable_fields
@@ -253,10 +288,18 @@ class FoodAnalyzerBot(BaseBot):
             if "notes" in meal_data and "notes" in fields_mapping:
                 record_fields[fields_mapping["notes"]] = meal_data.get("notes", "")
 
+            # 添加附言字段
+            if "user_comment" in meal_data and "user_comment" in fields_mapping:
+                record_fields[fields_mapping["user_comment"]] = meal_data.get("user_comment", "")
+
+            # 添加图片字段（飞书多维表格附件字段格式）
+            if image_token and "image" in fields_mapping:
+                record_fields[fields_mapping["image"]] = [{
+                    "file_token": image_token
+                }]
+
             # 添加记录
             add_record_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.bitable_app_token}/tables/{self.bitable_table_id}/records"
-            headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-
             payload = {"fields": record_fields}
 
             logger.info(f"[{self.name}] 发送数据到多维表格: {record_fields}")
@@ -273,3 +316,49 @@ class FoodAnalyzerBot(BaseBot):
         except Exception as e:
             logger.error(f"[{self.name}] 保存到多维表格异常: {e}", exc_info=True)
             return False
+
+    def _upload_image_to_bitable(self, access_token: str, message_id: str, image_key: str) -> Optional[str]:
+        """上传图片到多维表格并返回 file_token"""
+        try:
+            logger.info(f"[{self.name}] 开始上传图片: message_id={message_id}, image_key={image_key}")
+
+            # 1. 从飞书消息中获取图片数据
+            image_data = self.client.get_image_resource(message_id, image_key)
+            if not image_data:
+                logger.error(f"[{self.name}] 获取图片数据失败")
+                return None
+
+            # 2. 上传图片到飞书文件系统
+            upload_url = "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all"
+
+            files = {
+                'file': ('food_image.jpg', image_data, 'image/jpeg')
+            }
+            data = {
+                'file_name': 'food_image.jpg',
+                'parent_type': 'bitable_image',
+                'parent_node': self.bitable_app_token,
+                'size': str(len(image_data))
+            }
+            headers = {
+                "Authorization": f"Bearer {access_token}"
+            }
+
+            upload_response = requests.post(upload_url, headers=headers, files=files, data=data)
+
+            if upload_response.status_code == 200:
+                result = upload_response.json()
+                if result.get("code") == 0:
+                    file_token = result.get("data", {}).get("file_token")
+                    logger.info(f"[{self.name}] 图片上传成功: file_token={file_token}")
+                    return file_token
+                else:
+                    logger.error(f"[{self.name}] 图片上传失败: {result}")
+                    return None
+            else:
+                logger.error(f"[{self.name}] 图片上传请求失败: {upload_response.text}")
+                return None
+
+        except Exception as e:
+            logger.error(f"[{self.name}] 上传图片异常: {e}", exc_info=True)
+            return None
