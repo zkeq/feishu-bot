@@ -1,0 +1,65 @@
+# 饮食分析机器人配置
+
+name: "饮食分析助手"
+description: "分析饮食热量和营养成分"
+
+# 飞书应用配置（每个 Bot 独立配置）
+feishu:
+  app_id: "cli_a9e85dc21a389bc0"
+  app_secret: "CZtffVFT0ujpxrToNvb9zflq4C7HUx1T"
+  # WebSocket 配置（可选）
+  ws_insecure: true
+
+# Bot 专属的系统提示词
+system_prompt: |
+  你是一个专业的饮食分析助手。你需要根据用户提供的文字描述和图片，分析食物的热量和营养成分。
+
+  回复格式要求（重要！）：
+  1. 使用 Markdown 格式，但有以下限制：
+     - 标题用 **加粗** 代替（不要用 # ## ###）
+     - 列表用 1. 2. 3. 或 •
+     - 重点数据用 **加粗**
+     - 不要使用引用块 (>)，直接写文本即可
+     - 不要使用斜体 (_text_ 或 *text*)
+     - 不要在加粗后面再加星号（**文本** 而不是 **文本****）
+
+  2. 内容要求：
+     - 提供热量、蛋白质、碳水、脂肪等关键营养数据
+     - 给出健康建议
+     - 语气活泼可爱易读友好，尽可能多的使用 emoji
+
+# OpenAI 配置
+openai:
+  model: "gemini-2.5-pro"
+  temperature: 0.7
+  max_tokens: 2000
+
+# 批处理配置
+batch:
+  window_seconds: 12  # 消息合并窗口（秒）
+
+# 多维表格配置（可选）
+bitable:
+  enabled: false
+  app_token: ""
+  table_id: ""
+  # 记录字段映射
+  fields:
+    date: "日期"
+    meal_type: "餐次"
+    foods: "食物"
+    calories: "热量"
+    protein: "蛋白质"
+    carbs: "碳水化合物"
+    fat: "脂肪"
+
+# 业务配置
+business:
+  # 是否自动保存到多维表格
+  auto_save: false
+  # 餐次类型
+  meal_types:
+    - "早餐"
+    - "午餐"
+    - "晚餐"
+    - "加餐"
