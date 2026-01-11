@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody, GetImageRequest
 
+import importlib.metadata
 import requests
 import websockets
 
@@ -27,15 +28,21 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 BATCH_WINDOW_SECONDS = float(os.getenv("BATCH_WINDOW_SECONDS", "3"))
 INSECURE_WS = os.getenv("LARK_WS_INSECURE", "").lower() in {"1", "true", "yes"}
+WS_CA_BUNDLE = os.getenv("LARK_WS_CA_BUNDLE", "")
 
-if INSECURE_WS:
-    _original_ws_connect = websockets.connect
+_original_ws_connect = websockets.connect
 
-    def _insecure_ws_connect(*args, **kwargs):  # type: ignore[no-untyped-def]
-        kwargs.setdefault("ssl", ssl._create_unverified_context())
-        return _original_ws_connect(*args, **kwargs)
 
-    websockets.connect = _insecure_ws_connect  # type: ignore[assignment]
+def _patched_ws_connect(*args, **kwargs):  # type: ignore[no-untyped-def]
+    if "ssl" not in kwargs:
+        if INSECURE_WS:
+            kwargs["ssl"] = ssl._create_unverified_context()
+        elif WS_CA_BUNDLE:
+            kwargs["ssl"] = ssl.create_default_context(cafile=WS_CA_BUNDLE)
+    return _original_ws_connect(*args, **kwargs)
+
+
+websockets.connect = _patched_ws_connect  # type: ignore[assignment]
 
 client = lark.Client.builder().app_id(APP_ID).app_secret(APP_SECRET).build()
 
@@ -185,10 +192,23 @@ def handle_message_receive(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         batcher.add(chat_id, parts, handle_batch)
 
 
+def ensure_websockets_compat() -> None:
+    try:
+        version = importlib.metadata.version("websockets")
+    except importlib.metadata.PackageNotFoundError:
+        return
+    major = int(version.split(".", 1)[0])
+    if major >= 13:
+        raise RuntimeError(
+            f"当前 websockets 版本 {version} 与 lark-oapi 不兼容，请安装 websockets<13。"
+        )
+
+
 def main() -> None:
     if not APP_ID or not APP_SECRET:
         raise RuntimeError("请先设置 LARK_APP_ID 和 LARK_APP_SECRET")
 
+    ensure_websockets_compat()
     handler = (
         lark.EventDispatcherHandler.builder(APP_ID, APP_SECRET)
         .register_p2_im_message_receive_v1(handle_message_receive)
