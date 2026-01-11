@@ -24,15 +24,14 @@ system_prompt: |
      - 不要在加粗后面再加星号（**文本** 而不是 **文本****）
 
   2. 内容要求：
-     - 提供热量、蛋白质、碳水、脂肪等关键营养数据
-     - 给出健康建议
      - 语气活泼可爱易读友好，尽可能多的使用 emoji
+     - 多给用户情绪价值, 多鼓励用户
 
 # OpenAI 配置
 openai:
   model: "gemini-2.5-pro"
   temperature: 0.7
-  max_tokens: 2000
+  # max_tokens: 2000000
 
 # 批处理配置
 batch:
