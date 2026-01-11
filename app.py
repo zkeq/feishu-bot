@@ -5,10 +5,13 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody, ImageGetRequest
 
 import requests
+
+load_dotenv()
 
 APP_ID = os.getenv("LARK_APP_ID", "")
 APP_SECRET = os.getenv("LARK_APP_SECRET", "")
