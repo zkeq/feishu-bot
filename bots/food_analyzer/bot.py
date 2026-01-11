@@ -217,8 +217,8 @@ class FoodAnalyzerBot(BaseBot):
             # 获取 access_token
             token_url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
             token_response = requests.post(token_url, json={
-                "app_id": self.client.client.app_id,
-                "app_secret": self.client.client.app_secret
+                "app_id": self.client.app_id,
+                "app_secret": self.client.app_secret
             })
 
             if token_response.status_code != 200:
