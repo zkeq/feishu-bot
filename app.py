@@ -28,7 +28,11 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 BATCH_WINDOW_SECONDS = float(os.getenv("BATCH_WINDOW_SECONDS", "3"))
 INSECURE_WS = os.getenv("LARK_WS_INSECURE", "").lower() in {"1", "true", "yes"}
-WS_CA_BUNDLE = os.getenv("LARK_WS_CA_BUNDLE", "")
+WS_CA_BUNDLE = (
+    os.getenv("LARK_WS_CA_BUNDLE", "")
+    or os.getenv("SSL_CERT_FILE", "")
+    or os.getenv("REQUESTS_CA_BUNDLE", "")
+)
 
 _original_ws_connect = websockets.connect
 
