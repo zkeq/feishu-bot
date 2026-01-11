@@ -2,16 +2,16 @@ import base64
 import json
 import os
 import threading
-import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+
+import lark_oapi as lark
+from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody, ImageGetRequest
 
 import requests
-from flask import Flask, jsonify, request
 
 APP_ID = os.getenv("LARK_APP_ID", "")
 APP_SECRET = os.getenv("LARK_APP_SECRET", "")
-ENCRYPT_KEY = os.getenv("LARK_ENCRYPT_KEY", "")
 SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
     "你是一个群聊里的智能助手，需要根据用户的文字和图片内容进行总结、分析并给出美观的回复。",
@@ -21,10 +21,7 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 BATCH_WINDOW_SECONDS = float(os.getenv("BATCH_WINDOW_SECONDS", "3"))
 
-app = Flask(__name__)
-
-_token_lock = threading.Lock()
-_token_cache: Tuple[str, float] = ("", 0.0)
+client = lark.Client.builder().app_id(APP_ID).app_secret(APP_SECRET).build()
 
 
 @dataclass
@@ -32,7 +29,6 @@ class MessagePart:
     kind: str
     text: Optional[str] = None
     image_key: Optional[str] = None
-    image_data_url: Optional[str] = None
 
 
 class MessageBatcher:
@@ -65,49 +61,27 @@ class MessageBatcher:
 batcher = MessageBatcher(BATCH_WINDOW_SECONDS)
 
 
-def verify_signature(timestamp: str, nonce: str, body: str, signature: str) -> bool:
-    if not ENCRYPT_KEY:
-        return True
-    import hashlib
-    import hmac
-
-    sign_payload = f"{timestamp}{nonce}{body}".encode("utf-8")
-    digest = hmac.new(ENCRYPT_KEY.encode("utf-8"), sign_payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(digest, signature)
-
-
-def get_tenant_access_token() -> str:
-    global _token_cache
-    with _token_lock:
-        token, expiry = _token_cache
-        if token and expiry > time.time() + 60:
-            return token
-        response = requests.post(
-            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-            json={"app_id": APP_ID, "app_secret": APP_SECRET},
-            timeout=10,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        token = payload.get("tenant_access_token", "")
-        expires_in = payload.get("expire", 0)
-        _token_cache = (token, time.time() + expires_in)
-        return token
+def _read_image_bytes(response: Any) -> Optional[bytes]:
+    if hasattr(response, "file") and response.file is not None:
+        return response.file.read()
+    raw = getattr(response, "raw", None)
+    if raw is not None:
+        return getattr(raw, "content", None)
+    return None
 
 
 def fetch_image_as_data_url(image_key: str) -> Optional[str]:
-    token = get_tenant_access_token()
-    if not token:
+    request = ImageGetRequest.builder().image_key(image_key).build()
+    response = client.im.v1.image.get(request)
+    if not response.success():
         return None
-    response = requests.get(
-        f"https://open.feishu.cn/open-apis/im/v1/images/{image_key}",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=10,
-    )
-    if response.status_code != 200:
+    content = _read_image_bytes(response)
+    if not content:
         return None
-    content_type = response.headers.get("Content-Type", "image/png")
-    encoded = base64.b64encode(response.content).decode("utf-8")
+    content_type = "image/png"
+    if hasattr(response, "content_type") and response.content_type:
+        content_type = response.content_type
+    encoded = base64.b64encode(content).decode("utf-8")
     return f"data:{content_type};base64,{encoded}"
 
 
@@ -166,19 +140,23 @@ def call_openai(parts: List[MessagePart]) -> str:
 
 
 def reply_to_chat(chat_id: str, text: str) -> None:
-    token = get_tenant_access_token()
-    if not token:
-        return
-    requests.post(
-        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "receive_id": chat_id,
-            "msg_type": "text",
-            "content": json.dumps({"text": text}, ensure_ascii=False),
-        },
-        timeout=10,
+    request = (
+        CreateMessageRequest.builder()
+        .receive_id_type("chat_id")
+        .request_body(
+            CreateMessageRequestBody.builder()
+            .receive_id(chat_id)
+            .msg_type("text")
+            .content(json.dumps({"text": text}, ensure_ascii=False))
+            .build()
+        )
+        .build()
     )
+    response = client.im.v1.message.create(request)
+    if not response.success():
+        lark.logger.error(
+            "reply failed, code=%s msg=%s", response.code, response.msg
+        )
 
 
 def handle_batch(chat_id: str, parts: List[MessagePart]) -> None:
@@ -193,36 +171,25 @@ def handle_batch(chat_id: str, parts: List[MessagePart]) -> None:
     reply_to_chat(chat_id, answer)
 
 
-@app.route("/webhook", methods=["POST"])
-def webhook() -> Any:
-    body = request.get_data(as_text=True)
-    data = request.json or {}
-
-    if data.get("type") == "url_verification":
-        return jsonify({"challenge": data.get("challenge")})
-
-    timestamp = request.headers.get("X-Lark-Request-Timestamp", "")
-    nonce = request.headers.get("X-Lark-Request-Nonce", "")
-    signature = request.headers.get("X-Lark-Signature", "")
-
-    if not verify_signature(timestamp, nonce, body, signature):
-        return jsonify({"message": "invalid signature"}), 403
-
-    event = data.get("event", {})
-    if event.get("type") != "message":
-        return jsonify({"message": "ignored"})
-
-    message = event.get("message", {})
-    chat_id = message.get("chat_id")
-    if not chat_id:
-        return jsonify({"message": "missing chat"})
-
-    parts = parse_message_content(message.get("message_type", ""), message.get("content", ""))
+def handle_message_receive(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
+    message = data.event.message
+    chat_id = message.chat_id
+    parts = parse_message_content(message.message_type, message.content)
     if parts:
         batcher.add(chat_id, parts, handle_batch)
 
-    return jsonify({"message": "ok"})
+
+def main() -> None:
+    if not APP_ID or not APP_SECRET:
+        raise RuntimeError("请先设置 LARK_APP_ID 和 LARK_APP_SECRET")
+
+    handler = (
+        lark.EventDispatcherHandler.builder(APP_ID, APP_SECRET)
+        .register_p2_im_message_receive_v1(handle_message_receive)
+        .build()
+    )
+    lark.ws_client.start(handler)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+    main()

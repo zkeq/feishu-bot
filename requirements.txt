@@ -1,2 +1,2 @@
-flask>=3.0.0
+lark-oapi>=1.4.8
 requests>=2.31.0
