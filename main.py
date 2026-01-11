@@ -146,23 +146,71 @@ class BotInstance:
 
             logger.info(f"[{self.bot_name}] 按钮数据: {meal_data}")
 
-            # 调用 bot 的保存方法
-            success = self.bot._save_to_bitable(meal_data)
+            # 获取上下文信息
+            context = data.event.context
+            message_id = context.open_message_id if hasattr(context, 'open_message_id') else None
+            chat_id = context.open_chat_id if hasattr(context, 'open_chat_id') else None
 
-            # 创建响应
-            if success:
-                toast = CallBackToast()
-                toast.type = "success"
-                toast.content = "✅ 导入成功！数据已保存到多维表格"
-            else:
-                toast = CallBackToast()
-                toast.type = "error"
-                toast.content = "❌ 导入失败，请检查多维表格配置或稍后重试"
+            # 立即返回响应，提示正在处理
+            toast = CallBackToast()
+            toast.type = "info"
+            toast.content = "⏳ 正在保存中，请稍候..."
 
             response = P2CardActionTriggerResponse()
             response.toast = toast
 
-            logger.info(f"[{self.bot_name}] 卡片交互处理完成")
+            logger.info(f"[{self.bot_name}] 立即返回响应，开始异步保存")
+
+            # 在后台线程中异步处理保存
+            def async_save():
+                try:
+                    logger.info(f"[{self.bot_name}] 后台线程开始保存...")
+                    success = self.bot._save_to_bitable(meal_data)
+
+                    # 保存完成后，通过新消息通知用户结果
+                    if chat_id:
+                        if success:
+                            result_msg = "✅ **导入成功！**\n\n数据已保存到多维表格"
+                        else:
+                            result_msg = "❌ **导入失败**\n\n请检查多维表格配置或稍后重试"
+
+                        # 发送结果通知消息
+                        content = {
+                            "config": {"wide_screen_mode": True},
+                            "elements": [
+                                {
+                                    "tag": "div",
+                                    "text": {"tag": "lark_md", "content": result_msg}
+                                }
+                            ]
+                        }
+                        self.client.send_message(chat_id, content, msg_type="interactive")
+                        logger.info(f"[{self.bot_name}] 已发送保存结果通知")
+
+                    logger.info(f"[{self.bot_name}] 后台保存完成: {success}")
+
+                except Exception as e:
+                    logger.error(f"[{self.bot_name}] 后台保存异常: {e}", exc_info=True)
+                    # 发送错误通知
+                    if chat_id:
+                        error_msg = f"❌ **保存异常**\n\n{str(e)}"
+                        content = {
+                            "config": {"wide_screen_mode": True},
+                            "elements": [
+                                {
+                                    "tag": "div",
+                                    "text": {"tag": "lark_md", "content": error_msg}
+                                }
+                            ]
+                        }
+                        self.client.send_message(chat_id, content, msg_type="interactive")
+
+            # 启动后台线程
+            import threading
+            thread = threading.Thread(target=async_save, daemon=True)
+            thread.start()
+
+            logger.info(f"[{self.bot_name}] 卡片交互处理完成（已启动后台保存）")
             logger.info("=" * 60)
 
             return response
