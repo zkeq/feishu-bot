@@ -1,5 +1,6 @@
 import base64
 import json
+import mimetypes
 import os
 import threading
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 import lark_oapi as lark
-from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody, ImageGetRequest
+from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody, GetImageRequest
 
 import requests
 
@@ -64,27 +65,17 @@ class MessageBatcher:
 batcher = MessageBatcher(BATCH_WINDOW_SECONDS)
 
 
-def _read_image_bytes(response: Any) -> Optional[bytes]:
-    if hasattr(response, "file") and response.file is not None:
-        return response.file.read()
-    raw = getattr(response, "raw", None)
-    if raw is not None:
-        return getattr(raw, "content", None)
-    return None
-
-
 def fetch_image_as_data_url(image_key: str) -> Optional[str]:
-    request = ImageGetRequest.builder().image_key(image_key).build()
+    request = GetImageRequest.builder().image_key(image_key).build()
     response = client.im.v1.image.get(request)
     if not response.success():
         return None
-    content = _read_image_bytes(response)
-    if not content:
+    if not response.file:
         return None
-    content_type = "image/png"
-    if hasattr(response, "content_type") and response.content_type:
-        content_type = response.content_type
-    encoded = base64.b64encode(content).decode("utf-8")
+    content_type, _ = mimetypes.guess_type(response.file_name or "")
+    if not content_type:
+        content_type = "image/png"
+    encoded = base64.b64encode(response.file.read()).decode("utf-8")
     return f"data:{content_type};base64,{encoded}"
 
 
