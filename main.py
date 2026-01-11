@@ -140,9 +140,9 @@ class BotInstance:
             logger.info("=" * 60)
             logger.info(f"[{self.bot_name}] 收到卡片交互事件")
 
-            # 获取按钮的值（应该是字典格式的 meal_data）
+            # 获取按钮的值（SDK 已解析为字典对象）
             action = data.event.action
-            meal_data = action.value  # 直接是字典，不需要 JSON 解析
+            meal_data = action.value  # 直接使用字典，SDK 已处理
 
             logger.info(f"[{self.bot_name}] 按钮数据: {meal_data}")
 

@@ -183,7 +183,7 @@ class FoodAnalyzerBot(BaseBot):
             f"• 评分：{meal_data.get('score', 0)}/10"
         )
 
-        # 直接传递字典作为按钮的 value
+        # 将 meal_data 序列化为 JSON 字符串作为按钮的 value
         return {
             "config": {"wide_screen_mode": True},
             "elements": [
@@ -198,7 +198,7 @@ class FoodAnalyzerBot(BaseBot):
                             "tag": "button",
                             "text": {"tag": "plain_text", "content": "📥 导入到多维表格"},
                             "type": "primary",
-                            "value": meal_data,  # 直接传字典，不要 JSON 字符串
+                            "value": meal_data,  # SDK 期望字典类型，不要序列化
                             "confirm": {
                                 "title": {"tag": "plain_text", "content": "确认导入"},
                                 "text": {"tag": "plain_text", "content": "确定要将这条饮食记录导入到多维表格吗？"}
