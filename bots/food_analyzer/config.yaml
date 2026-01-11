@@ -5,8 +5,8 @@ description: "分析饮食热量和营养成分"
 
 # 飞书应用配置（每个 Bot 独立配置）
 feishu:
-  app_id: "cli_a9e85dc21a389bc0"
-  app_secret: "CZtffVFT0ujpxrToNvb9zflq4C7HUx1T"
+  app_id: "cli_a9e985f26838dcc2"
+  app_secret: "gLp2rc9u7H0ecsO3Hl907bVq5VpVtIfe"
   # WebSocket 配置（可选）
   ws_insecure: true
 
