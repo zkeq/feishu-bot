@@ -165,29 +165,70 @@ class BotInstance:
             def async_save():
                 try:
                     logger.info(f"[{self.bot_name}] 后台线程开始保存...")
-                    success = self.bot._save_to_bitable(meal_data)
 
-                    # 保存完成后，通过新消息通知用户结果
-                    if chat_id:
-                        if success:
-                            result_msg = "✅ **导入成功！**\n\n数据已保存到多维表格"
-                        else:
-                            result_msg = "❌ **导入失败**\n\n请检查多维表格配置或稍后重试"
+                    # 检查是否为批量导入
+                    is_batch = isinstance(meal_data, dict) and meal_data.get("batch") == True
 
-                        # 发送结果通知消息
-                        content = {
-                            "config": {"wide_screen_mode": True},
-                            "elements": [
-                                {
-                                    "tag": "div",
-                                    "text": {"tag": "lark_md", "content": result_msg}
-                                }
-                            ]
-                        }
-                        self.client.send_message(chat_id, content, msg_type="interactive")
-                        logger.info(f"[{self.bot_name}] 已发送保存结果通知")
+                    if is_batch:
+                        # 批量导入模式
+                        meals = meal_data.get("meals", [])
+                        logger.info(f"[{self.bot_name}] 批量导入模式，共 {len(meals)} 条记录")
 
-                    logger.info(f"[{self.bot_name}] 后台保存完成: {success}")
+                        success_count = 0
+                        fail_count = 0
+
+                        for idx, single_meal in enumerate(meals, start=1):
+                            logger.info(f"[{self.bot_name}] 保存第 {idx}/{len(meals)} 条记录...")
+                            if self.bot._save_to_bitable(single_meal):
+                                success_count += 1
+                            else:
+                                fail_count += 1
+
+                        logger.info(f"[{self.bot_name}] 批量导入完成: 成功 {success_count}/{len(meals)}")
+
+                        # 发送批量结果通知
+                        if chat_id:
+                            if fail_count == 0:
+                                result_msg = f"✅ **批量导入成功！**\n\n已成功保存 {success_count} 条饮食记录到多维表格"
+                            else:
+                                result_msg = f"⚠️ **批量导入部分完成**\n\n成功：{success_count} 条\n失败：{fail_count} 条\n\n请检查多维表格配置或稍后重试失败的记录"
+
+                            content = {
+                                "config": {"wide_screen_mode": True},
+                                "elements": [
+                                    {
+                                        "tag": "div",
+                                        "text": {"tag": "lark_md", "content": result_msg}
+                                    }
+                                ]
+                            }
+                            self.client.send_message(chat_id, content, msg_type="interactive")
+                            logger.info(f"[{self.bot_name}] 已发送批量保存结果通知")
+                    else:
+                        # 单条导入模式（原有逻辑）
+                        success = self.bot._save_to_bitable(meal_data)
+
+                        # 保存完成后，通过新消息通知用户结果
+                        if chat_id:
+                            if success:
+                                result_msg = "✅ **导入成功！**\n\n数据已保存到多维表格"
+                            else:
+                                result_msg = "❌ **导入失败**\n\n请检查多维表格配置或稍后重试"
+
+                            # 发送结果通知消息
+                            content = {
+                                "config": {"wide_screen_mode": True},
+                                "elements": [
+                                    {
+                                        "tag": "div",
+                                        "text": {"tag": "lark_md", "content": result_msg}
+                                    }
+                                ]
+                            }
+                            self.client.send_message(chat_id, content, msg_type="interactive")
+                            logger.info(f"[{self.bot_name}] 已发送保存结果通知")
+
+                        logger.info(f"[{self.bot_name}] 后台保存完成: {success}")
 
                 except Exception as e:
                     logger.error(f"[{self.bot_name}] 后台保存异常: {e}", exc_info=True)

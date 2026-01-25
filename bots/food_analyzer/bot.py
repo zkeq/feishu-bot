@@ -42,8 +42,44 @@ class FoodAnalyzerBot(BaseBot):
     def process_messages(
         self, chat_id: str, parts: List[MessagePart], status_msg_id: Optional[str]
     ) -> str:
-        """处理消息并返回分析结果"""
+        """处理消息并返回分析结果
+
+        支持批量处理多张图片：
+        - 如果有多张图片，每张图片作为独立的一餐分析
+        - 文字内容会附加到每张图片的分析中
+        """
         logger.info(f"[{self.name}] 开始分析饮食，消息片段数: {len(parts)}")
+
+        # 分离图片和文字
+        images = [part for part in parts if part.kind == "image" and part.image_key]
+        texts = [part for part in parts if part.kind == "text" and part.text]
+
+        # 合并所有文字内容
+        combined_text = " ".join([t.text for t in texts]) if texts else ""
+
+        logger.info(f"[{self.name}] 检测到 {len(images)} 张图片，{len(texts)} 条文字")
+
+        # 如果没有图片，当作一条普通消息处理
+        if not images:
+            return self._process_single_meal(chat_id, parts, status_msg_id, combined_text)
+
+        # 如果只有一张图片，按原逻辑处理
+        if len(images) == 1:
+            return self._process_single_meal(chat_id, parts, status_msg_id, combined_text)
+
+        # 多张图片：分别处理每张图片
+        logger.info(f"[{self.name}] 批量处理模式：{len(images)} 张图片")
+        return self._process_multiple_meals(chat_id, images, combined_text, status_msg_id)
+
+    def _process_single_meal(
+        self,
+        chat_id: str,
+        parts: List[MessagePart],
+        status_msg_id: Optional[str],
+        user_comment: str
+    ) -> str:
+        """处理单条饮食记录（原有逻辑）"""
+        logger.info(f"[{self.name}] 单条记录处理模式")
 
         # 更新状态
         if status_msg_id:
@@ -66,14 +102,12 @@ class FoodAnalyzerBot(BaseBot):
         # 提取 JSON 数据
         meal_data = self._extract_json_data(result)
 
-        # 提取原始数据（图片和附言）
-        if meal_data:
-            # 提取所有文字内容作为附言
-            user_texts = [part.text for part in parts if part.kind == "text" and part.text]
-            if user_texts:
-                meal_data["user_comment"] = " ".join(user_texts)
+        # 添加用户附言
+        if meal_data and user_comment:
+            meal_data["user_comment"] = user_comment
 
-            # 提取图片信息（保存第一张图片）
+        # 提取图片信息（保存第一张图片）
+        if meal_data:
             images = [part for part in parts if part.kind == "image" and part.image_key]
             if images:
                 meal_data["image_key"] = images[0].image_key
@@ -81,7 +115,6 @@ class FoodAnalyzerBot(BaseBot):
 
         # 生成带按钮的交互式卡片
         if meal_data and self.bitable_enabled:
-            # 更新消息为交互式卡片
             card_content = self._build_interactive_card(result, meal_data, chat_id)
             if status_msg_id:
                 self.client.update_message(status_msg_id, card_content)
@@ -92,6 +125,202 @@ class FoodAnalyzerBot(BaseBot):
             if status_msg_id:
                 self._update_status(chat_id, status_msg_id, final_content)
             return result
+
+    def _process_multiple_meals(
+        self,
+        chat_id: str,
+        images: List[MessagePart],
+        combined_text: str,
+        status_msg_id: Optional[str]
+    ) -> str:
+        """处理多张图片，每张图片作为独立的一餐
+
+        Args:
+            chat_id: 聊天 ID
+            images: 图片列表
+            combined_text: 合并的文字内容（会附加到每张图片）
+            status_msg_id: 状态消息 ID
+
+        Returns:
+            处理结果摘要
+        """
+        logger.info(f"[{self.name}] 批量处理 {len(images)} 张图片")
+
+        # 更新状态
+        if status_msg_id:
+            self._update_status(
+                chat_id,
+                status_msg_id,
+                f"**🔍 批量分析模式**\n\n检测到 {len(images)} 张图片，正在逐个分析..."
+            )
+
+        # 存储每张图片的分析结果
+        all_meal_data = []
+        analysis_summaries = []
+
+        # 逐个处理每张图片
+        for idx, image_part in enumerate(images, start=1):
+            logger.info(f"[{self.name}] 处理第 {idx}/{len(images)} 张图片")
+
+            # 更新状态
+            if status_msg_id:
+                self._update_status(
+                    chat_id,
+                    status_msg_id,
+                    f"**🔍 正在分析第 {idx}/{len(images)} 张图片...**\n\n识别食物中..."
+                )
+
+            # 为单张图片构建消息（图片 + 文字）
+            single_parts = [image_part]
+            if combined_text:
+                # 添加文字说明
+                single_parts.append(MessagePart(kind="text", text=combined_text))
+
+            messages = self._build_ai_messages(single_parts)
+
+            # 调用 AI 分析（流式）
+            try:
+                if status_msg_id:
+                    result = self._call_ai_streaming(chat_id, messages, status_msg_id)
+                else:
+                    result = self.ai_client.call(
+                        messages=messages,
+                        model=self.openai_model,
+                        temperature=self.openai_temperature,
+                        max_tokens=self.openai_max_tokens,
+                    )
+
+                # 提取 JSON 数据
+                meal_data = self._extract_json_data(result)
+
+                if meal_data:
+                    # 添加用户附言
+                    if combined_text:
+                        meal_data["user_comment"] = combined_text
+
+                    # 添加图片信息
+                    meal_data["image_key"] = image_part.image_key
+                    meal_data["image_message_id"] = image_part.message_id
+
+                    all_meal_data.append(meal_data)
+
+                    # 生成简短摘要
+                    summary = f"第{idx}餐：{meal_data.get('meal_type', '未知')} - {meal_data.get('main_dish', '未知')} ({meal_data.get('calories', 0)} kcal)"
+                    analysis_summaries.append(summary)
+                    logger.info(f"[{self.name}] {summary}")
+                else:
+                    logger.warning(f"[{self.name}] 第 {idx} 张图片未能提取数据")
+                    analysis_summaries.append(f"第{idx}餐：分析失败")
+
+            except Exception as e:
+                logger.error(f"[{self.name}] 分析第 {idx} 张图片时出错: {e}", exc_info=True)
+                analysis_summaries.append(f"第{idx}餐：分析出错 - {str(e)}")
+
+        # 生成汇总结果
+        logger.info(f"[{self.name}] 批量分析完成，成功: {len(all_meal_data)}/{len(images)}")
+
+        # 构建批量结果卡片
+        summary_text = self._build_batch_summary(all_meal_data)
+
+        # 如果启用了多维表格，生成批量导入按钮
+        if all_meal_data and self.bitable_enabled:
+            card_content = self._build_batch_interactive_card(summary_text, all_meal_data)
+            if status_msg_id:
+                self.client.update_message(status_msg_id, card_content)
+            return summary_text
+        else:
+            # 普通格式
+            final_content = preprocess_markdown_for_feishu(summary_text)
+            if status_msg_id:
+                self._update_status(chat_id, status_msg_id, final_content)
+            return summary_text
+
+    def _build_batch_summary(self, all_meal_data: List[Dict[str, Any]]) -> str:
+        """构建批量分析结果的汇总文本
+
+        Args:
+            all_meal_data: 所有成功分析的饮食数据
+
+        Returns:
+            汇总文本
+        """
+        if not all_meal_data:
+            return "**❌ 批量分析失败**\n\n所有图片都未能成功分析，请检查图片内容是否清晰。"
+
+        # 计算总计数据
+        total_calories = sum(meal.get("calories", 0) for meal in all_meal_data)
+        total_protein = sum(meal.get("protein", 0) for meal in all_meal_data)
+        total_carbs = sum(meal.get("carbs", 0) for meal in all_meal_data)
+        total_fat = sum(meal.get("fat", 0) for meal in all_meal_data)
+        avg_score = sum(meal.get("score", 0) for meal in all_meal_data) / len(all_meal_data)
+
+        # 构建汇总文本
+        summary = f"**📊 批量分析完成**\n\n成功分析 **{len(all_meal_data)}** 条饮食记录！\n\n"
+
+        # 添加每条记录的摘要
+        summary += "**📝 记录明细**\n\n"
+        for idx, meal in enumerate(all_meal_data, start=1):
+            date_str = meal.get("date", "未知日期")
+            time_str = meal.get("time", "")
+            meal_type = meal.get("meal_type", "未知")
+            main_dish = meal.get("main_dish", "未知")
+            calories = meal.get("calories", 0)
+
+            time_display = f" {time_str}" if time_str else ""
+            summary += f"{idx}. **{date_str}{time_display}** - {meal_type}：{main_dish} ({calories} kcal)\n"
+
+        # 添加总计数据
+        summary += f"\n**🔢 营养总计**\n\n"
+        summary += f"• 总热量：{total_calories} kcal\n"
+        summary += f"• 总蛋白质：{total_protein} g\n"
+        summary += f"• 总碳水：{total_carbs} g\n"
+        summary += f"• 总脂肪：{total_fat} g\n"
+        summary += f"• 平均评分：{avg_score:.1f}/10\n"
+
+        return summary
+
+    def _build_batch_interactive_card(
+        self, summary_text: str, all_meal_data: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """构建批量导入的交互式卡片
+
+        Args:
+            summary_text: 汇总文本
+            all_meal_data: 所有饮食数据（数组）
+
+        Returns:
+            飞书卡片 JSON
+        """
+        return {
+            "config": {"wide_screen_mode": True},
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": summary_text}
+                },
+                {
+                    "tag": "action",
+                    "actions": [
+                        {
+                            "tag": "button",
+                            "text": {
+                                "tag": "plain_text",
+                                "content": f"📥 批量导入 {len(all_meal_data)} 条记录到多维表格"
+                            },
+                            "type": "primary",
+                            "value": {"batch": True, "meals": all_meal_data},  # 批量数据标记
+                            "confirm": {
+                                "title": {"tag": "plain_text", "content": "确认批量导入"},
+                                "text": {
+                                    "tag": "plain_text",
+                                    "content": f"确定要将这 {len(all_meal_data)} 条饮食记录导入到多维表格吗？"
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
 
     def _build_ai_messages(self, parts: List[MessagePart]) -> List[Dict[str, Any]]:
         """构建 AI 消息"""
