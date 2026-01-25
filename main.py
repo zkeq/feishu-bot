@@ -252,6 +252,7 @@ class BotInstance:
             thread.start()
 
             logger.info(f"[{self.bot_name}] 卡片交互处理完成（已启动后台保存）")
+            logger.info(f"[{self.bot_name}] 卡片交互处理完成（已启动后台保存）")
             logger.info("=" * 60)
 
             return response

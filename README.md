@@ -75,12 +75,27 @@ API_RETRY_DELAY=2
 
 4. **配置飞书 Bot**
 
-编辑 `bots/food_analyzer/config.yaml`，填入你的飞书应用配置：
+复制配置模板并填入你的飞书应用配置：
+
+```bash
+cp bots/food_analyzer/config.example.yaml bots/food_analyzer/config.yaml
+cp config/bots.example.yaml config/bots.yaml
+```
+
+编辑 `bots/food_analyzer/config.yaml`：
 
 ```yaml
 feishu:
   app_id: "your_app_id"
   app_secret: "your_app_secret"
+```
+
+编辑 `config/bots.yaml`，填入你的群组 ID：
+
+```yaml
+routes:
+  by_chat_id:
+    "oc_your_chat_id_here": "food_analyzer"
 ```
 
 5. **启动框架**
