@@ -1,0 +1,42 @@
+# 飞书机器人路由配置
+# 根据不同的群组或关键词路由到不同的 Bot
+
+# 默认 Bot（如果没有匹配到其他规则）
+default_bot: "food_analyzer"
+
+# Bot 路由规则
+routes:
+  # 按群组 ID 路由
+  by_chat_id:
+    "oc_your_chat_id_here": "food_analyzer"  # 饮食分析群
+    # "oc_xxxxx": "task_manager"  # 任务管理群
+    # "oc_yyyyy": "note_keeper"   # 笔记助手群
+
+  # 按关键词路由（消息包含关键词时使用特定 Bot）
+  by_keyword:
+    - keywords: ["饮食", "热量", "食物", "营养"]
+      bot: "food_analyzer"
+    # - keywords: ["任务", "待办", "todo"]
+    #   bot: "task_manager"
+    # - keywords: ["笔记", "记录"]
+    #   bot: "note_keeper"
+
+# 可用的 Bot 列表
+bots:
+  food_analyzer:
+    enabled: true
+    module: "bots.food_analyzer.bot"
+    class: "FoodAnalyzerBot"
+    config_file: "bots/food_analyzer/config.yaml"
+
+  # task_manager:
+  #   enabled: false
+  #   module: "bots.task_manager.bot"
+  #   class: "TaskManagerBot"
+  #   config_file: "bots/task_manager/config.yaml"
+
+  # note_keeper:
+  #   enabled: false
+  #   module: "bots.note_keeper.bot"
+  #   class: "NoteKeeperBot"
+  #   config_file: "bots/note_keeper/config.yaml"

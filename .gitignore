@@ -3,6 +3,11 @@
 .env.local
 .env.*.local
 
+# 配置文件（包含敏感信息）
+*.yaml
+!*.example.yaml
+!requirements.yaml
+
 # Python
 __pycache__/
 *.py[cod]
