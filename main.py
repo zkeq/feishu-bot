@@ -57,18 +57,25 @@ class BotInstance:
             logger.info(f"[{self.bot_name}] 收到新消息事件")
 
             message = data.event.message
+            sender = data.event.sender
             chat_id = message.chat_id
             message_id = getattr(message, "message_id", "N/A")
             msg_type = message.message_type
             content = message.content
 
+            # 获取发送者 ID（优先使用 user_id，没有则使用 open_id）
+            sender_id = None
+            if sender and sender.sender_id:
+                sender_id = sender.sender_id.user_id or sender.sender_id.open_id
+
             logger.info(f"[{self.bot_name}] 消息详情:")
             logger.info(f"  chat_id: {chat_id}")
             logger.info(f"  message_id: {message_id}")
             logger.info(f"  message_type: {msg_type}")
+            logger.info(f"  sender_id: {sender_id}")
 
             # 解析消息
-            parts = self._parse_message_content(msg_type, content, message_id)
+            parts = self._parse_message_content(msg_type, content, message_id, sender_id)
 
             if parts:
                 logger.info(f"[{self.bot_name}] 消息解析成功，添加到批处理队列")
@@ -81,27 +88,27 @@ class BotInstance:
         except Exception as e:
             logger.error(f"[{self.bot_name}] 处理消息接收事件时发生错误: {e}", exc_info=True)
 
-    def _parse_message_content(self, msg_type: str, content: str, message_id: str) -> List[MessagePart]:
+    def _parse_message_content(self, msg_type: str, content: str, message_id: str, sender_id: Optional[str] = None) -> List[MessagePart]:
         """解析消息内容"""
         parts: List[MessagePart] = []
         data = json.loads(content) if content else {}
 
         if msg_type == "text":
             text = data.get("text", "")
-            parts.append(MessagePart(kind="text", text=text))
+            parts.append(MessagePart(kind="text", text=text, sender_id=sender_id))
         elif msg_type == "image":
             image_key = data.get("image_key")
-            parts.append(MessagePart(kind="image", image_key=image_key, message_id=message_id))
+            parts.append(MessagePart(kind="image", image_key=image_key, message_id=message_id, sender_id=sender_id))
         elif msg_type == "post":
             for block in data.get("content", []):
                 for element in block:
                     tag = element.get("tag")
                     if tag == "text":
                         text = element.get("text", "")
-                        parts.append(MessagePart(kind="text", text=text))
+                        parts.append(MessagePart(kind="text", text=text, sender_id=sender_id))
                     elif tag == "img":
                         image_key = element.get("image_key")
-                        parts.append(MessagePart(kind="image", image_key=image_key, message_id=message_id))
+                        parts.append(MessagePart(kind="image", image_key=image_key, message_id=message_id, sender_id=sender_id))
 
         return parts
 

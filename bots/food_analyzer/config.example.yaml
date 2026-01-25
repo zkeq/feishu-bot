@@ -118,6 +118,7 @@ bitable:
     notes: "备注"               # 文本字段
     user_comment: "附言"        # 文本字段
     image: "图片"               # 附件字段
+    person: "人员"              # 人员字段（记录发送消息的用户）
 
 # 业务配置
 business:

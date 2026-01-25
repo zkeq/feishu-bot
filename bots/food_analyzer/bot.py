@@ -106,12 +106,16 @@ class FoodAnalyzerBot(BaseBot):
         if meal_data and user_comment:
             meal_data["user_comment"] = user_comment
 
-        # 提取图片信息（保存第一张图片）
+        # 提取图片和发送者信息（保存第一张图片）
         if meal_data:
             images = [part for part in parts if part.kind == "image" and part.image_key]
             if images:
                 meal_data["image_key"] = images[0].image_key
                 meal_data["image_message_id"] = images[0].message_id
+
+            # 提取发送者 ID（从第一个 part 中获取）
+            if parts and parts[0].sender_id:
+                meal_data["sender_id"] = parts[0].sender_id
 
         # 生成带按钮的交互式卡片
         if meal_data and self.bitable_enabled:
@@ -206,6 +210,10 @@ class FoodAnalyzerBot(BaseBot):
                     # 添加图片信息
                     meal_data["image_key"] = image_part.image_key
                     meal_data["image_message_id"] = image_part.message_id
+
+                    # 添加发送者 ID
+                    if image_part.sender_id:
+                        meal_data["sender_id"] = image_part.sender_id
 
                     # 线程安全地保存数据
                     with lock:
@@ -626,6 +634,12 @@ class FoodAnalyzerBot(BaseBot):
             if image_token and "image" in fields_mapping:
                 record_fields[fields_mapping["image"]] = [{
                     "file_token": image_token
+                }]
+
+            # 添加人员字段（飞书多维表格人员字段格式）
+            if "sender_id" in meal_data and "person" in fields_mapping:
+                record_fields[fields_mapping["person"]] = [{
+                    "id": meal_data["sender_id"]
                 }]
 
             # 添加记录

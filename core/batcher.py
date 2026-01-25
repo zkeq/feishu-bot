@@ -18,6 +18,7 @@ class MessagePart:
     text: Optional[str] = None
     image_key: Optional[str] = None
     message_id: Optional[str] = None
+    sender_id: Optional[str] = None  # 发送者的 user_id 或 open_id
 
 
 @dataclass
