@@ -133,7 +133,7 @@ class FoodAnalyzerBot(BaseBot):
         combined_text: str,
         status_msg_id: Optional[str]
     ) -> str:
-        """处理多张图片，每张图片作为独立的一餐
+        """处理多张图片，每张图片作为独立的一餐（并行处理）
 
         Args:
             chat_id: 聊天 ID
@@ -144,52 +144,56 @@ class FoodAnalyzerBot(BaseBot):
         Returns:
             处理结果摘要
         """
-        logger.info(f"[{self.name}] 批量处理 {len(images)} 张图片")
+        logger.info(f"[{self.name}] 批量处理 {len(images)} 张图片（并行模式）")
 
         # 更新初始状态
         if status_msg_id:
             self._update_status(
                 chat_id,
                 status_msg_id,
-                f"**🔍 批量分析模式**\n\n检测到 {len(images)} 张图片，正在逐个分析..."
+                f"**🔍 批量分析模式**\n\n检测到 {len(images)} 张图片，正在并行分析..."
             )
 
-        # 存储每张图片的分析结果
-        all_meal_data = []
-
-        # 逐个处理每张图片，每张图片发送独立消息
-        for idx, image_part in enumerate(images, start=1):
-            logger.info(f"[{self.name}] 处理第 {idx}/{len(images)} 张图片")
-
-            # 为单张图片构建消息（图片 + 文字）
-            single_parts = [image_part]
-            if combined_text:
-                single_parts.append(MessagePart(kind="text", text=combined_text))
-
-            messages = self._build_ai_messages(single_parts)
-
-            # 调用 AI 分析（流式）
-            try:
-                # 为这张图片创建独立的状态消息
-                single_status_msg = self.client.send_message(
-                    chat_id,
-                    {
-                        "config": {"wide_screen_mode": True},
-                        "elements": [
-                            {
-                                "tag": "div",
-                                "text": {
-                                    "tag": "lark_md",
-                                    "content": f"**🔍 正在分析第 {idx}/{len(images)} 张图片...**\n\n识别食物中..."
-                                }
+        # 为每张图片创建状态消息
+        status_messages = []
+        for idx in range(len(images)):
+            msg_id = self.client.send_message(
+                chat_id,
+                {
+                    "config": {"wide_screen_mode": True},
+                    "elements": [
+                        {
+                            "tag": "div",
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**🔍 正在分析第 {idx+1}/{len(images)} 张图片...**\n\n等待 AI 响应中..."
                             }
-                        ]
-                    },
-                    msg_type="interactive"
-                )
+                        }
+                    ]
+                },
+                msg_type="interactive"
+            )
+            status_messages.append(msg_id)
+
+        # 存储每张图片的分析结果（线程安全）
+        all_meal_data = [None] * len(images)  # 预分配列表，保持顺序
+        import threading
+        lock = threading.Lock()
+
+        # 定义单张图片的处理函数
+        def process_single_image(idx: int, image_part: MessagePart, msg_id: str):
+            try:
+                logger.info(f"[{self.name}] [线程{idx+1}] 开始处理第 {idx+1} 张图片")
+
+                # 为单张图片构建消息（图片 + 文字）
+                single_parts = [image_part]
+                if combined_text:
+                    single_parts.append(MessagePart(kind="text", text=combined_text))
+
+                messages = self._build_ai_messages(single_parts)
 
                 # 流式调用 AI 分析这张图片
-                result = self._call_ai_streaming(chat_id, messages, single_status_msg)
+                result = self._call_ai_streaming(chat_id, messages, msg_id)
 
                 # 提取 JSON 数据
                 meal_data = self._extract_json_data(result)
@@ -203,47 +207,57 @@ class FoodAnalyzerBot(BaseBot):
                     meal_data["image_key"] = image_part.image_key
                     meal_data["image_message_id"] = image_part.message_id
 
-                    all_meal_data.append(meal_data)
+                    # 线程安全地保存数据
+                    with lock:
+                        all_meal_data[idx] = meal_data
 
                     # 更新这条消息为完整的分析结果（带单独导入按钮）
                     if self.bitable_enabled:
                         card_content = self._build_interactive_card(result, meal_data)
-                        self.client.update_message(single_status_msg, card_content)
+                        self.client.update_message(msg_id, card_content)
                     else:
                         final_content = preprocess_markdown_for_feishu(result)
-                        self._update_status(chat_id, single_status_msg, final_content)
+                        self._update_status(chat_id, msg_id, final_content)
 
-                    logger.info(f"[{self.name}] 第 {idx} 张图片分析完成")
+                    logger.info(f"[{self.name}] [线程{idx+1}] 第 {idx+1} 张图片分析完成")
                 else:
-                    logger.warning(f"[{self.name}] 第 {idx} 张图片未能提取数据")
+                    logger.warning(f"[{self.name}] [线程{idx+1}] 第 {idx+1} 张图片未能提取数据")
                     # 更新为失败消息
                     self._update_status(
                         chat_id,
-                        single_status_msg,
-                        f"**❌ 第 {idx} 张图片分析失败**\n\n无法识别食物内容，请确保图片清晰。"
+                        msg_id,
+                        f"**❌ 第 {idx+1} 张图片分析失败**\n\n无法识别食物内容，请确保图片清晰。"
                     )
 
             except Exception as e:
-                logger.error(f"[{self.name}] 分析第 {idx} 张图片时出错: {e}", exc_info=True)
-                # 发送错误消息
-                self.client.send_message(
+                logger.error(f"[{self.name}] [线程{idx+1}] 分析第 {idx+1} 张图片时出错: {e}", exc_info=True)
+                # 更新为错误消息
+                self._update_status(
                     chat_id,
-                    {
-                        "config": {"wide_screen_mode": True},
-                        "elements": [
-                            {
-                                "tag": "div",
-                                "text": {
-                                    "tag": "lark_md",
-                                    "content": f"**❌ 第 {idx} 张图片分析出错**\n\n{str(e)}"
-                                }
-                            }
-                        ]
-                    },
-                    msg_type="interactive"
+                    msg_id,
+                    f"**❌ 第 {idx+1} 张图片分析出错**\n\n{str(e)}"
                 )
 
-        # 生成汇总结果
+        # 启动所有线程并行处理
+        threads = []
+        for idx, image_part in enumerate(images):
+            thread = threading.Thread(
+                target=process_single_image,
+                args=(idx, image_part, status_messages[idx]),
+                name=f"ImageAnalysis-{idx+1}"
+            )
+            thread.start()
+            threads.append(thread)
+
+        logger.info(f"[{self.name}] 已启动 {len(threads)} 个并行分析线程")
+
+        # 等待所有线程完成
+        for thread in threads:
+            thread.join()
+
+        # 过滤掉失败的记录
+        all_meal_data = [meal for meal in all_meal_data if meal is not None]
+
         logger.info(f"[{self.name}] 批量分析完成，成功: {len(all_meal_data)}/{len(images)}")
 
         # 删除初始状态消息（已被各个独立消息替代）
