@@ -470,9 +470,18 @@ class FoodAnalyzerBot(BaseBot):
         clean_response = preprocess_markdown_for_feishu(clean_response)
 
         # 构建数据展示
+        date_str = meal_data.get('date', '')
+        time_str = meal_data.get('time', '')
+        datetime_display = ""
+        if date_str and time_str:
+            datetime_display = f"• 时间：{date_str} {time_str}\n"
+        elif date_str:
+            datetime_display = f"• 日期：{date_str}\n"
+
         data_display = (
             f"\n\n---\n\n"
             f"**📊 数据摘要**\n\n"
+            f"{datetime_display}"
             f"• 餐次：{meal_data.get('meal_type', '未知')}\n"
             f"• 主餐：{meal_data.get('main_dish', '无')}\n"
         )
