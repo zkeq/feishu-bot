@@ -1,6 +1,17 @@
-# 🤖 飞书智能机器人框架
+# 🤖 Zkeq 的生活 - 飞书智能机器人框架
 
 > 一个强大、灵活、易扩展的飞书机器人开发框架，支持多 Bot 管理、AI 智能分析、批量处理等高级功能。
+
+<img width="1586" height="1992" alt="image" src="https://github.com/user-attachments/assets/ecd32c84-2d64-4b26-97f7-32b8bc2a36a2" />
+
+<img width="1586" height="1767" alt="image" src="https://github.com/user-attachments/assets/2959d089-5b52-4261-8b6b-7e9df02cfe2b" />
+
+<img width="1587" height="1992" alt="image" src="https://github.com/user-attachments/assets/409ea0d7-fed3-42aa-8def-bbf43bf7d6ee" />
+
+<img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/9044c98d-f7fb-47ef-91df-da9ce1d3475b" />
+
+<img width="3839" height="2160" alt="image" src="https://github.com/user-attachments/assets/40997820-d49a-4272-ba28-5b4543563c95" />
+
 
 [![Python Version](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
