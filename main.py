@@ -242,7 +242,23 @@ class FeishuBotFramework:
         # 全局 AI 客户端（所有 Bot 共享）
         openai_api_key = os.getenv("OPENAI_API_KEY", "")
         openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        self.ai_client = AIClient(openai_api_key, openai_base_url)
+
+        # 备用 API 配置
+        backup_api_key = os.getenv("OPENAI_API_KEY_BACKUP", "")
+        backup_base_url = os.getenv("OPENAI_BASE_URL_BACKUP", "")
+
+        # 重试配置
+        max_retries = int(os.getenv("API_MAX_RETRIES", "3"))
+        retry_delay = float(os.getenv("API_RETRY_DELAY", "2"))
+
+        self.ai_client = AIClient(
+            openai_api_key,
+            openai_base_url,
+            backup_api_key=backup_api_key if backup_api_key else None,
+            backup_base_url=backup_base_url if backup_base_url else None,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+        )
 
         # Bot 实例字典
         self.bot_instances: Dict[str, BotInstance] = {}
@@ -265,8 +281,18 @@ class FeishuBotFramework:
         """记录配置信息"""
         logger.info("=" * 60)
         logger.info("全局配置:")
-        logger.info(f"  OPENAI_API_KEY: {'已设置' if openai_api_key else '未设置'}")
-        logger.info(f"  OPENAI_BASE_URL: {openai_base_url}")
+        logger.info(f"  主 API - OPENAI_API_KEY: {'已设置' if openai_api_key else '未设置'}")
+        logger.info(f"  主 API - OPENAI_BASE_URL: {openai_base_url}")
+
+        backup_api_key = os.getenv("OPENAI_API_KEY_BACKUP", "")
+        backup_base_url = os.getenv("OPENAI_BASE_URL_BACKUP", "")
+        logger.info(f"  备用 API - OPENAI_API_KEY_BACKUP: {'已设置' if backup_api_key else '未设置'}")
+        logger.info(f"  备用 API - OPENAI_BASE_URL_BACKUP: {backup_base_url if backup_base_url else '未设置'}")
+
+        max_retries = int(os.getenv("API_MAX_RETRIES", "3"))
+        retry_delay = float(os.getenv("API_RETRY_DELAY", "2"))
+        logger.info(f"  重试配置 - API_MAX_RETRIES: {max_retries}")
+        logger.info(f"  重试配置 - API_RETRY_DELAY: {retry_delay}s")
         logger.info("=" * 60)
 
     def load_bots(self):
