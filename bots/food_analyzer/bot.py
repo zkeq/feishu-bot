@@ -546,7 +546,7 @@ class FoodAnalyzerBot(BaseBot):
             fields_mapping = self.bitable_fields
             record_fields = {}
 
-            # 映射时间字段（合并日期和时间）
+            # 映射时间字段（合并日期和时间，转换为时间戳）
             if "time" in fields_mapping:
                 date_str = meal_data.get("date", "")
                 time_str = meal_data.get("time", "")
@@ -555,16 +555,23 @@ class FoodAnalyzerBot(BaseBot):
                 if not date_str:
                     date_str = datetime.now().strftime("%Y-%m-%d")
 
-                # 组合日期和时间
-                if time_str:
-                    # 有时间：YYYY-MM-DD HH:MM
-                    datetime_value = f"{date_str} {time_str}"
-                else:
-                    # 没有时间：只保存日期 YYYY-MM-DD
-                    datetime_value = date_str
+                try:
+                    # 组合日期和时间并转换为时间戳
+                    if time_str:
+                        # 有时间：解析 YYYY-MM-DD HH:MM
+                        datetime_str = f"{date_str} {time_str}"
+                        datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M")
+                    else:
+                        # 没有时间：只解析日期，时间设为 00:00
+                        datetime_obj = datetime.strptime(date_str, "%Y-%m-%d")
 
-                record_fields[fields_mapping["time"]] = datetime_value
-                logger.info(f"[{self.name}] 时间字段: {datetime_value}")
+                    # 转换为毫秒时间戳
+                    timestamp_ms = int(datetime_obj.timestamp() * 1000)
+                    record_fields[fields_mapping["time"]] = timestamp_ms
+                    logger.info(f"[{self.name}] 时间字段: {date_str} {time_str if time_str else '00:00'} -> {timestamp_ms}")
+                except Exception as e:
+                    logger.warning(f"[{self.name}] 时间转换失败: {e}，使用当前时间")
+                    record_fields[fields_mapping["time"]] = int(datetime.now().timestamp() * 1000)
 
             # 映射其他字段
             if "meal_type" in meal_data and "meal_type" in fields_mapping:
