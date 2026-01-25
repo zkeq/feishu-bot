@@ -111,8 +111,17 @@ class FoodAnalyzerBot(BaseBot):
                 else:
                     content.append({"type": "text", "text": f"[图片: {part.image_key}]"})
 
+        # 获取当前日期信息
+        now = datetime.now()
+        current_date = now.strftime("%Y-%m-%d")
+        weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        current_weekday = weekday_names[now.weekday()]
+
+        # 将日期信息添加到系统提示词
+        system_prompt_with_date = f"{self.get_system_prompt()}\n\n**当前时间信息**：今天是 {current_date} {current_weekday}。用户可能会提及日期（如'上周五'、'1月20日'等），请根据当前日期计算并在 JSON 的 date 字段中返回对应的 YYYY-MM-DD 格式日期。如果用户没有指定日期，则使用当前日期。"
+
         return [
-            {"role": "system", "content": self.get_system_prompt()},
+            {"role": "system", "content": system_prompt_with_date},
             {"role": "user", "content": content},
         ]
 
@@ -266,7 +275,19 @@ class FoodAnalyzerBot(BaseBot):
             fields_mapping = self.bitable_fields
             record_fields = {}
 
-            # 映射字段
+            # 映射日期字段（新增）
+            if "date" in meal_data and "date" in fields_mapping:
+                # 将日期转换为时间戳（毫秒）
+                try:
+                    date_obj = datetime.strptime(meal_data["date"], "%Y-%m-%d")
+                    timestamp_ms = int(date_obj.timestamp() * 1000)
+                    record_fields[fields_mapping["date"]] = timestamp_ms
+                    logger.info(f"[{self.name}] 日期字段: {meal_data['date']} -> {timestamp_ms}")
+                except Exception as e:
+                    logger.warning(f"[{self.name}] 日期转换失败: {e}，使用当前日期")
+                    record_fields[fields_mapping["date"]] = int(datetime.now().timestamp() * 1000)
+
+            # 映射其他字段
             if "meal_type" in meal_data and "meal_type" in fields_mapping:
                 record_fields[fields_mapping["meal_type"]] = meal_data["meal_type"]
             if "main_dish" in meal_data and "main_dish" in fields_mapping:
