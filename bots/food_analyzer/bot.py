@@ -115,7 +115,7 @@ class FoodAnalyzerBot(BaseBot):
 
         # 生成带按钮的交互式卡片
         if meal_data and self.bitable_enabled:
-            card_content = self._build_interactive_card(result, meal_data, chat_id)
+            card_content = self._build_interactive_card(result, meal_data)
             if status_msg_id:
                 self.client.update_message(status_msg_id, card_content)
             return result
@@ -139,14 +139,14 @@ class FoodAnalyzerBot(BaseBot):
             chat_id: 聊天 ID
             images: 图片列表
             combined_text: 合并的文字内容（会附加到每张图片）
-            status_msg_id: 状态消息 ID
+            status_msg_id: 状态消息 ID（会被删除，每张图片发送独立消息）
 
         Returns:
             处理结果摘要
         """
         logger.info(f"[{self.name}] 批量处理 {len(images)} 张图片")
 
-        # 更新状态
+        # 更新初始状态
         if status_msg_id:
             self._update_status(
                 chat_id,
@@ -156,39 +156,40 @@ class FoodAnalyzerBot(BaseBot):
 
         # 存储每张图片的分析结果
         all_meal_data = []
-        analysis_summaries = []
 
-        # 逐个处理每张图片
+        # 逐个处理每张图片，每张图片发送独立消息
         for idx, image_part in enumerate(images, start=1):
             logger.info(f"[{self.name}] 处理第 {idx}/{len(images)} 张图片")
-
-            # 更新状态
-            if status_msg_id:
-                self._update_status(
-                    chat_id,
-                    status_msg_id,
-                    f"**🔍 正在分析第 {idx}/{len(images)} 张图片...**\n\n识别食物中..."
-                )
 
             # 为单张图片构建消息（图片 + 文字）
             single_parts = [image_part]
             if combined_text:
-                # 添加文字说明
                 single_parts.append(MessagePart(kind="text", text=combined_text))
 
             messages = self._build_ai_messages(single_parts)
 
             # 调用 AI 分析（流式）
             try:
-                if status_msg_id:
-                    result = self._call_ai_streaming(chat_id, messages, status_msg_id)
-                else:
-                    result = self.ai_client.call(
-                        messages=messages,
-                        model=self.openai_model,
-                        temperature=self.openai_temperature,
-                        max_tokens=self.openai_max_tokens,
-                    )
+                # 为这张图片创建独立的状态消息
+                single_status_msg = self.client.send_message(
+                    chat_id,
+                    {
+                        "config": {"wide_screen_mode": True},
+                        "elements": [
+                            {
+                                "tag": "div",
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**🔍 正在分析第 {idx}/{len(images)} 张图片...**\n\n识别食物中..."
+                                }
+                            }
+                        ]
+                    },
+                    msg_type="interactive"
+                )
+
+                # 流式调用 AI 分析这张图片
+                result = self._call_ai_streaming(chat_id, messages, single_status_msg)
 
                 # 提取 JSON 数据
                 meal_data = self._extract_json_data(result)
@@ -204,36 +205,77 @@ class FoodAnalyzerBot(BaseBot):
 
                     all_meal_data.append(meal_data)
 
-                    # 生成简短摘要
-                    summary = f"第{idx}餐：{meal_data.get('meal_type', '未知')} - {meal_data.get('main_dish', '未知')} ({meal_data.get('calories', 0)} kcal)"
-                    analysis_summaries.append(summary)
-                    logger.info(f"[{self.name}] {summary}")
+                    # 更新这条消息为完整的分析结果（带单独导入按钮）
+                    if self.bitable_enabled:
+                        card_content = self._build_interactive_card(result, meal_data)
+                        self.client.update_message(single_status_msg, card_content)
+                    else:
+                        final_content = preprocess_markdown_for_feishu(result)
+                        self._update_status(chat_id, single_status_msg, final_content)
+
+                    logger.info(f"[{self.name}] 第 {idx} 张图片分析完成")
                 else:
                     logger.warning(f"[{self.name}] 第 {idx} 张图片未能提取数据")
-                    analysis_summaries.append(f"第{idx}餐：分析失败")
+                    # 更新为失败消息
+                    self._update_status(
+                        chat_id,
+                        single_status_msg,
+                        f"**❌ 第 {idx} 张图片分析失败**\n\n无法识别食物内容，请确保图片清晰。"
+                    )
 
             except Exception as e:
                 logger.error(f"[{self.name}] 分析第 {idx} 张图片时出错: {e}", exc_info=True)
-                analysis_summaries.append(f"第{idx}餐：分析出错 - {str(e)}")
+                # 发送错误消息
+                self.client.send_message(
+                    chat_id,
+                    {
+                        "config": {"wide_screen_mode": True},
+                        "elements": [
+                            {
+                                "tag": "div",
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**❌ 第 {idx} 张图片分析出错**\n\n{str(e)}"
+                                }
+                            }
+                        ]
+                    },
+                    msg_type="interactive"
+                )
 
         # 生成汇总结果
         logger.info(f"[{self.name}] 批量分析完成，成功: {len(all_meal_data)}/{len(images)}")
 
-        # 构建批量结果卡片
+        # 删除初始状态消息（已被各个独立消息替代）
+        if status_msg_id:
+            try:
+                self.client.delete_message(status_msg_id)
+                logger.info(f"[{self.name}] 已删除初始状态消息")
+            except Exception as e:
+                logger.warning(f"[{self.name}] 删除初始状态消息失败: {e}")
+
+        # 发送最终汇总消息（带批量导入按钮）
         summary_text = self._build_batch_summary(all_meal_data)
 
-        # 如果启用了多维表格，生成批量导入按钮
         if all_meal_data and self.bitable_enabled:
+            # 发送带批量导入按钮的汇总卡片
             card_content = self._build_batch_interactive_card(summary_text, all_meal_data)
-            if status_msg_id:
-                self.client.update_message(status_msg_id, card_content)
-            return summary_text
+            self.client.send_message(chat_id, card_content, msg_type="interactive")
         else:
-            # 普通格式
+            # 发送普通格式汇总
             final_content = preprocess_markdown_for_feishu(summary_text)
-            if status_msg_id:
-                self._update_status(chat_id, status_msg_id, final_content)
-            return summary_text
+            summary_card = {
+                "config": {"wide_screen_mode": True},
+                "elements": [
+                    {
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": final_content}
+                    }
+                ]
+            }
+            self.client.send_message(chat_id, summary_card, msg_type="interactive")
+
+        return summary_text
 
     def _build_batch_summary(self, all_meal_data: List[Dict[str, Any]]) -> str:
         """构建批量分析结果的汇总文本
@@ -407,7 +449,7 @@ class FoodAnalyzerBot(BaseBot):
             logger.error(f"[{self.name}] 提取 JSON 数据失败: {e}")
             return None
 
-    def _build_interactive_card(self, ai_response: str, meal_data: Dict[str, Any], chat_id: str) -> Dict[str, Any]:
+    def _build_interactive_card(self, ai_response: str, meal_data: Dict[str, Any]) -> Dict[str, Any]:
         """生成带按钮的交互式卡片"""
         # 移除 JSON 代码块，只保留分析内容
         clean_response = re.sub(r'```json[\s\S]*?```', '', ai_response).strip()
