@@ -275,7 +275,7 @@ class FoodAnalyzerBot(BaseBot):
             fields_mapping = self.bitable_fields
             record_fields = {}
 
-            # 映射日期字段（新增）
+            # 映射日期字段
             if "date" in meal_data and "date" in fields_mapping:
                 # 将日期转换为时间戳（毫秒）
                 try:
@@ -286,6 +286,13 @@ class FoodAnalyzerBot(BaseBot):
                 except Exception as e:
                     logger.warning(f"[{self.name}] 日期转换失败: {e}，使用当前日期")
                     record_fields[fields_mapping["date"]] = int(datetime.now().timestamp() * 1000)
+
+            # 映射时间字段（新增）
+            if "time" in meal_data and "time" in fields_mapping:
+                time_value = meal_data.get("time", "")
+                if time_value:  # 只有当时间不为空时才保存
+                    record_fields[fields_mapping["time"]] = time_value
+                    logger.info(f"[{self.name}] 时间字段: {time_value}")
 
             # 映射其他字段
             if "meal_type" in meal_data and "meal_type" in fields_mapping:
