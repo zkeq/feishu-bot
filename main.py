@@ -8,11 +8,16 @@ import logging
 import os
 import sys
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import lark_oapi as lark
+import nest_asyncio
 import yaml
 from dotenv import load_dotenv
+
+# 允许嵌套事件循环
+nest_asyncio.apply()
 
 from core.client import FeishuClient
 from core.batcher import MessageBatcher, MessagePart
@@ -48,6 +53,12 @@ class BotInstance:
         self.batcher = batcher
         self.config = config
         self.ws_client = None
+
+        # 消息去重：记录最近处理过的 message_id
+        self._processed_messages: Dict[str, float] = {}
+        self._dedup_lock = threading.Lock()
+        self._dedup_expire_seconds = 600  # 10分钟过期
+
         logger.info(f"BotInstance 创建: {bot_name} ({bot.name})")
 
     def handle_message_receive(self, data: lark.im.v1.P2ImMessageReceiveV1) -> None:
@@ -62,6 +73,13 @@ class BotInstance:
             message_id = getattr(message, "message_id", "N/A")
             msg_type = message.message_type
             content = message.content
+
+            # 消息去重检查
+            if message_id != "N/A":
+                if self._is_duplicate_message(message_id):
+                    logger.warning(f"[{self.bot_name}] 检测到重复消息，跳过处理: message_id={message_id}")
+                    return
+                self._mark_message_processed(message_id)
 
             # 获取发送者 ID（优先使用 user_id，没有则使用 open_id）
             sender_id = None
@@ -78,8 +96,19 @@ class BotInstance:
             parts = self._parse_message_content(msg_type, content, message_id, sender_id)
 
             if parts:
-                logger.info(f"[{self.bot_name}] 消息解析成功，添加到批处理队列")
-                self.batcher.add(chat_id, parts, self._handle_batch)
+                # 检查是否是斜杠命令（以 / 开头）
+                is_command = False
+                if parts and parts[0].kind == "text" and parts[0].text:
+                    is_command = parts[0].text.strip().startswith("/")
+
+                if is_command:
+                    # 斜杠命令立即执行，不等待批处理
+                    logger.info(f"[{self.bot_name}] 检测到斜杠命令，立即执行")
+                    self._handle_batch(chat_id, parts, None)
+                else:
+                    # 普通消息添加到批处理队列
+                    logger.info(f"[{self.bot_name}] 消息解析成功，添加到批处理队列")
+                    self.batcher.add(chat_id, parts, self._handle_batch)
             else:
                 logger.warning(f"[{self.bot_name}] 消息解析后没有有效的消息片段")
 
@@ -112,13 +141,61 @@ class BotInstance:
 
         return parts
 
+    def _is_duplicate_message(self, message_id: str) -> bool:
+        """检查消息是否已处理过"""
+        with self._dedup_lock:
+            # 清理过期的消息记录
+            current_time = time.time()
+            expired_ids = [
+                mid for mid, timestamp in self._processed_messages.items()
+                if current_time - timestamp > self._dedup_expire_seconds
+            ]
+            for mid in expired_ids:
+                del self._processed_messages[mid]
+
+            # 检查是否重复
+            return message_id in self._processed_messages
+
+    def _mark_message_processed(self, message_id: str) -> None:
+        """标记消息已处理"""
+        with self._dedup_lock:
+            self._processed_messages[message_id] = time.time()
+
     def _handle_batch(self, chat_id: str, parts: List[MessagePart], status_msg_id: Optional[str]) -> None:
         """处理批量消息"""
         logger.info(f"[{self.bot_name}] ========== 开始处理批量消息 ==========")
 
         try:
-            # Bot 处理消息（Bot 内部会负责更新最终消息）
-            answer = self.bot.process_messages(chat_id, parts, status_msg_id)
+            # 检查是否有活跃的会话（等待用户补充信息）
+            if self.bot.conversation_manager.has_active_conversation(chat_id):
+                logger.info(f"[{self.bot_name}] 检测到活跃会话，处理用户补充信息")
+
+                # 获取发送者ID（从第一个part中获取）
+                user_id = parts[0].sender_id if parts else None
+
+                # 处理用户的补充回复
+                answer = self.bot.handle_user_response(chat_id, parts, user_id)
+
+                if answer:
+                    # 如果有返回结果，发送消息
+                    if status_msg_id:
+                        # 更新状态消息
+                        content = {
+                            "config": {"wide_screen_mode": True},
+                            "elements": [
+                                {
+                                    "tag": "div",
+                                    "text": {"tag": "lark_md", "content": answer},
+                                }
+                            ],
+                        }
+                        self.client.update_message(status_msg_id, content)
+                    else:
+                        # 发送新消息
+                        self.client.send_message(chat_id, answer)
+            else:
+                # 正常处理消息（Bot 内部会负责更新最终消息）
+                answer = self.bot.process_messages(chat_id, parts, status_msg_id)
 
             logger.info(f"[{self.bot_name}] ========== 批量消息处理完成 ==========")
 
@@ -149,14 +226,52 @@ class BotInstance:
 
             # 获取按钮的值（SDK 已解析为字典对象）
             action = data.event.action
-            meal_data = action.value  # 直接使用字典，SDK 已处理
+            action_value = action.value  # 直接使用字典，SDK 已处理
 
-            logger.info(f"[{self.bot_name}] 按钮数据: {meal_data}")
+            logger.info(f"[{self.bot_name}] 按钮数据: {action_value}")
 
             # 获取上下文信息
             context = data.event.context
             message_id = context.open_message_id if hasattr(context, 'open_message_id') else None
             chat_id = context.open_chat_id if hasattr(context, 'open_chat_id') else None
+
+            # 获取用户 ID
+            user_id = None
+            if hasattr(data.event, 'operator') and data.event.operator:
+                operator = data.event.operator
+                if hasattr(operator, 'user_id'):
+                    user_id = operator.user_id
+
+            # 检查 Bot 是否有自定义的 handle_card_action 方法
+            if hasattr(self.bot, 'handle_card_action') and callable(getattr(self.bot, 'handle_card_action')):
+                logger.info(f"[{self.bot_name}] 使用 Bot 自定义的卡片交互处理器")
+
+                # 调用 Bot 的 handle_card_action 方法
+                result = self.bot.handle_card_action(action_value, user_id, chat_id)
+
+                # 构建响应
+                response = P2CardActionTriggerResponse()
+
+                if isinstance(result, dict):
+                    # 如果返回了 toast
+                    if "toast" in result:
+                        toast = CallBackToast()
+                        toast.type = result["toast"].get("type", "info")
+                        toast.content = result["toast"].get("content", "处理完成")
+                        response.toast = toast
+
+                    # 如果返回了新卡片
+                    if "card" in result:
+                        # 更新原卡片
+                        if message_id:
+                            self.client.update_message(message_id, result["card"])
+
+                logger.info(f"[{self.bot_name}] 卡片交互处理完成")
+                logger.info("=" * 60)
+                return response
+
+            # 如果 Bot 没有自定义处理器，使用默认的 food_analyzer 逻辑
+            logger.info(f"[{self.bot_name}] 使用默认的卡片交互处理器（food_analyzer 模式）")
 
             # 立即返回响应，提示正在处理
             toast = CallBackToast()
@@ -174,11 +289,11 @@ class BotInstance:
                     logger.info(f"[{self.bot_name}] 后台线程开始保存...")
 
                     # 检查是否为批量导入
-                    is_batch = isinstance(meal_data, dict) and meal_data.get("batch") == True
+                    is_batch = isinstance(action_value, dict) and action_value.get("batch") == True
 
                     if is_batch:
                         # 批量导入模式
-                        meals = meal_data.get("meals", [])
+                        meals = action_value.get("meals", [])
                         logger.info(f"[{self.bot_name}] 批量导入模式，共 {len(meals)} 条记录")
 
                         success_count = 0
@@ -213,7 +328,7 @@ class BotInstance:
                             logger.info(f"[{self.bot_name}] 已发送批量保存结果通知")
                     else:
                         # 单条导入模式（原有逻辑）
-                        success = self.bot._save_to_bitable(meal_data)
+                        success = self.bot._save_to_bitable(action_value)
 
                         # 保存完成后，通过新消息通知用户结果
                         if chat_id:
@@ -258,7 +373,6 @@ class BotInstance:
             thread = threading.Thread(target=async_save, daemon=True)
             thread.start()
 
-            logger.info(f"[{self.bot_name}] 卡片交互处理完成（已启动后台保存）")
             logger.info(f"[{self.bot_name}] 卡片交互处理完成（已启动后台保存）")
             logger.info("=" * 60)
 

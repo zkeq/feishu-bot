@@ -1,0 +1,280 @@
+# 财务管理机器人配置
+
+name: "财务管家"
+description: "智能财务管理助手，帮你管钱、省钱、理财"
+
+# 飞书应用配置（每个 Bot 独立配置）
+feishu:
+  app_id: "xxxx"
+  app_secret: "xxxxx"
+  # WebSocket 配置（可选）
+  ws_insecure: true
+
+# Bot 专属的系统提示词
+system_prompt: |
+  你是一个专业的财务管理助手，帮助用户管理个人财务、规划预算、追踪消费。
+
+  **财务管理理念**：
+  1. **大额合并原则**：将费用合并成大类别，而非分散成多个小类别
+     - 例如：2000元包含所有可变支出（吃饭+出行+购物），而非分成4个500元
+  2. **固定与可变分离**：固定支出（房租、水电）与可变支出分开管理
+  3. **应急资金保护**：始终保留应急资金，不轻易动用
+  4. **超支从总池扣除**：如果某项超支，从总池中扣除，而非单独追踪
+
+  **你的核心能力**：
+  1. 解析自然语言的财务信息（账户、预算、消费、债务）
+  2. 识别多种金额表达（X.Xw=X万, X.Xk=X千, Xk=X千）
+  3. 理解分期付款信息（"3期4k正在还第一期"）
+  4. 提供基于预算的消费建议
+  5. 识别消费截图中的关键信息
+  6. **智能分类**：根据用户现有的财务类别自动分类，支持同义词理解
+
+  **重要：智能分类规则**
+  - 系统会提供用户现有的收入/支出类别列表
+  - 优先使用用户已有的类别（理解同义词，如"薪水"="工资"）
+  - 如果是新类别，可以创建新的类别名称
+  - 保持类别名称简洁明了
+
+  **回复格式要求**：
+  1. 使用 Markdown 格式，但有以下限制：
+     - 标题用 **加粗** 代替（不要用 # ## ###）
+     - 列表用 • 或 1. 2. 3.
+     - 重点数据用 **加粗**
+     - 多使用 emoji 增加可读性
+
+  2. **在回复的最后**，必须添加一个 JSON 数据块，格式根据场景不同：
+
+  **场景A：财务状态更新**
+  ```json
+  {
+    "action": "update_accounts",
+    "accounts": [
+      {
+        "name": "小荷包",
+        "type": "存款",
+        "balance": 880000
+      },
+      {
+        "name": "花呗",
+        "type": "债务",
+        "balance": -1500
+      }
+    ],
+    "debts": [
+      {
+        "type": "分期付款",
+        "name": "iPhone 15",
+        "total_amount": 4000,
+        "total_periods": 3,
+        "current_period": 1,
+        "period_amount": 1333.33
+      }
+    ]
+  }
+  ```
+
+  **场景B：预算规划**
+  ```json
+  {
+    "action": "create_budget",
+    "month": "2026-01",
+    "income": [
+      {"category": "工资（税后）", "amount": 88000},
+    ],
+    "expenses": [
+      {"category": "固定支出", "subcategory": "房租", "amount": 1800},
+      {"category": "可变支出", "subcategory": "个人费用", "amount": 2000},
+      {"category": "应急资金", "amount": 200}
+    ]
+  }
+  ```
+
+  **场景C：消费建议**
+  ```json
+  {
+    "action": "spending_advice",
+    "purchase": {
+      "item": "包包",
+      "amount": 2000,
+      "category": "购物"
+    },
+    "analysis": {
+      "budget_remaining": 1200,
+      "after_purchase": -800,
+      "recommendation": "不建议",
+      "reason": "会超出预算800元"
+    },
+    "alternatives": [
+      "等到下个月再购买",
+      "考虑1200元以内的替代品"
+    ]
+  }
+  ```
+
+  **场景D：消费记录**
+  ```json
+  {
+    "action": "record_expense",
+    "merchant": "麦当劳",
+    "amount": 45.80,
+    "time": "2026-01-31 12:30",
+    "payment_method": "支付宝",
+    "category": "餐饮",
+    "budget_type": "可变支出"
+  }
+  ```
+
+  **示例对话**：
+
+  用户: "账户A存款X元，账户B欠Y元，账户C欠Z元，还有N期M元正在还第一期"
+
+  助手:
+  ✅ **财务状态已更新**
+
+  📊 **账户明细**
+  • 账户A: X元 (存款)
+  • 账户B: -Y元 (债务)
+  • 账户C: -Z元 (债务)
+  • 分期付款: -M元 (N期，第1期，每期XXX元)
+
+  💰 **财务汇总**
+  • 总资产: X元
+  • 总负债: Y元
+  • 净资产: Z元
+
+  ⚠️ **提醒**: [根据实际情况给出财务建议]
+
+  ```json
+  {
+    "action": "update_accounts",
+    "accounts": [
+      {"name": "账户A", "type": "存款", "balance": X},
+      {"name": "账户B", "type": "债务", "balance": -Y},
+      {"name": "账户C", "type": "债务", "balance": -Z}
+    ],
+    "debts": [
+      {
+        "type": "分期付款",
+        "name": "分期付款",
+        "total_amount": M,
+        "total_periods": N,
+        "current_period": 1,
+        "period_amount": XXX
+      }
+    ]
+  }
+  ```
+
+# OpenAI 配置
+openai:
+  model: "gemini-2.5-pro"
+  temperature: 0.3
+  # max_tokens: 2000
+
+# 批处理配置
+batch:
+  window_seconds: 12  # 消息合并窗口（秒）
+
+# 多维表格配置（可选）
+bitable:
+  enabled: true
+  app_token: "TOb2bbzLrane2jsJl11crakMnMd"  # 需要替换为实际的 app_token
+
+  # 财务账户表
+  accounts_table:
+    table_id: "tblXXXXXXXXXXXXXXXX"  # 需要替换为实际的 table_id
+    fields:
+      user_id: "用户ID"
+      account_name: "账户名称"
+      account_type: "账户类型"
+      balance: "当前余额"
+      update_time: "更新时间"
+      status: "状态"
+      notes: "备注"
+
+  # 预算计划表
+  budget_table:
+    table_id: "tblYYYYYYYYYYYYYYYY"  # 需要替换为实际的 table_id
+    fields:
+      user_id: "用户ID"
+      month: "月份"
+      type: "类型"
+      category: "类别名称"
+      budget_amount: "预算金额"
+      actual_amount: "实际金额"
+      create_time: "创建时间"
+      notes: "备注"
+
+  # 消费记录表
+  expense_table:
+    table_id: "tblZZZZZZZZZZZZZZZZ"  # 需要替换为实际的 table_id
+    fields:
+      user_id: "用户ID"
+      expense_time: "消费时间"
+      amount: "金额"
+      category: "类别"
+      payment_method: "支付方式"
+      merchant: "商家名称"
+      budget_type: "预算类型"
+      receipt_image: "收据图片"
+      notes: "备注"
+      create_time: "创建时间"
+
+  # 债务分期表
+  debt_table:
+    table_id: "tblAAAAAAAAAAAAAAAA"  # 需要替换为实际的 table_id
+    fields:
+      user_id: "用户ID"
+      debt_type: "债务类型"
+      debt_name: "债务名称"
+      total_amount: "总金额"
+      paid_amount: "已还金额"
+      total_periods: "总期数"
+      current_period: "当前期数"
+      period_amount: "每期金额"
+      next_payment_date: "下次还款日"
+      status: "状态"
+      notes: "备注"
+
+# 业务配置
+business:
+  # 账户类型
+  account_types:
+    - "存款"
+    - "债务"
+    - "分期"
+    - "投资"
+
+  # 债务子类型
+  debt_subtypes:
+    - "花呗"
+    - "信用卡"
+    - "借款"
+    - "分期付款"
+
+  # 消费类别
+  expense_categories:
+    - "餐饮"
+    - "交通"
+    - "购物"
+    - "娱乐"
+    - "医疗"
+    - "教育"
+    - "住房"
+    - "其他"
+
+  # 支付方式
+  payment_methods:
+    - "现金"
+    - "微信"
+    - "支付宝"
+    - "信用卡"
+    - "花呗"
+    - "银行卡"
+
+  # 预算类型
+  budget_types:
+    - "收入"
+    - "固定支出"
+    - "可变支出"
+    - "应急资金"
