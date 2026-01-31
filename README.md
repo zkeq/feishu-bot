@@ -367,6 +367,8 @@ AI 会自动提取并使用正确的日期时间。
 
 #### 2. 配置财务管家
 
+复制多维表格模版: https://zkeq-life.feishu.cn/base/RHNPb2Z0Aa021VsJoZYcPGEqnCh?from=from_copylink
+
 复制配置模板：
 
 ```bash
@@ -490,7 +492,7 @@ API_RETRY_DELAY=2      # 指数退避：2s, 4s, 8s
 
 ### 多维表格配置
 
-复制多维表格模版: https://zkeq-life.feishu.cn/base/GKNzbq3fZasGzWsxliPcmr7enlS
+复制多维表格模版: https://zkeq-life.feishu.cn/base/RHNPb2Z0Aa021VsJoZYcPGEqnCh?from=from_copylink
 
 在 `bots/food_analyzer/config.yaml` 中配置：
 
