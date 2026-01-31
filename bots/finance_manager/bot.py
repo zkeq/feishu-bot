@@ -138,24 +138,7 @@ class FinanceManagerBot(BaseBot):
         """处理 /start 命令，显示控制面板"""
         try:
             user_id = self._get_user_id(parts)
-            if not user_id or not self.bitable_manager:
-                # 如果没有用户 ID 或 Bitable 未启用，显示简化版
-                card = self._build_simple_home_card()
-            else:
-                # 查询用户数据并生成完整的控制面板
-                accounts = self.bitable_manager.get_user_accounts(user_id)
-                debts = self.bitable_manager.get_user_debts(user_id)
-                budget_data = self.bitable_manager.get_current_month_budget(user_id)
-                expenses = self.bitable_manager.get_month_expenses(user_id)
-
-                # 计算财务汇总
-                financial_summary = self._calculate_financial_summary(accounts, debts)
-                budget_summary = self._calculate_budget_summary(budget_data, expenses)
-
-                # 生成首页卡片
-                card = self.card_generator.build_home_card(
-                    accounts, debts, budget_summary, financial_summary
-                )
+            card = self._build_home_card_for_user(user_id)
 
             # 发送卡片
             self.client.send_message(chat_id, card, msg_type="interactive")
@@ -164,6 +147,34 @@ class FinanceManagerBot(BaseBot):
         except Exception as e:
             logger.error(f"处理 /start 命令失败: {e}", exc_info=True)
             return self.on_error(e, chat_id)
+
+    def _build_home_card_for_user(self, user_id: Optional[str]) -> Dict[str, Any]:
+        """为指定用户构建首页卡片
+
+        Args:
+            user_id: 用户 ID，如果为 None 则返回简化版
+
+        Returns:
+            Dict: 首页卡片内容
+        """
+        if not user_id or not self.bitable_manager:
+            # 如果没有用户 ID 或 Bitable 未启用，显示简化版
+            return self._build_simple_home_card()
+
+        # 查询用户数据并生成完整的控制面板
+        accounts = self.bitable_manager.get_user_accounts(user_id)
+        debts = self.bitable_manager.get_user_debts(user_id)
+        budget_data = self.bitable_manager.get_current_month_budget(user_id)
+        expenses = self.bitable_manager.get_month_expenses(user_id)
+
+        # 计算财务汇总
+        financial_summary = self._calculate_financial_summary(accounts, debts)
+        budget_summary = self._calculate_budget_summary(budget_data, expenses)
+
+        # 生成首页卡片
+        return self.card_generator.build_home_card(
+            accounts, debts, budget_summary, financial_summary
+        )
 
     def _build_simple_home_card(self) -> Dict[str, Any]:
         """构建简化版首页卡片（无数据）"""
@@ -829,8 +840,15 @@ class FinanceManagerBot(BaseBot):
                 return self._handle_get_advice(user_id)
 
             elif action == "refresh":
-                # 刷新数据 - 重新显示首页
-                return self._handle_start_command(chat_id, [])
+                # 刷新数据 - 重新加载用户数据并更新卡片
+                card = self._build_home_card_for_user(user_id)
+                return {
+                    "card": card,
+                    "toast": {
+                        "type": "success",
+                        "content": "✅ 数据已刷新"
+                    }
+                }
 
             elif action == "edit_budget":
                 # 编辑预算计划 - 返回使用说明
