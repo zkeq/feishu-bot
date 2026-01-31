@@ -290,15 +290,68 @@ class FinanceManagerBot(BaseBot):
                 # 查询用户当前预算情况（用于消费建议）
                 budget_data = self.bitable_manager.get_current_month_budget(user_id)
                 expenses = self.bitable_manager.get_month_expenses(user_id)
+                accounts = self.bitable_manager.get_user_accounts(user_id)
+                debts = self.bitable_manager.get_user_debts(user_id)
+
+                # 添加账户信息
+                if accounts:
+                    accounts_context = "\n\n**当前账户情况**：\n"
+                    for acc in accounts:
+                        balance_display = f"{acc['balance']:.0f}元" if acc['balance'] >= 0 else f"欠{abs(acc['balance']):.0f}元"
+                        accounts_context += f"- {acc['account_name']} ({acc['account_type']}): {balance_display}\n"
+                    system_prompt += accounts_context
+
+                # 添加债务信息
+                if debts:
+                    debts_context = "\n\n**分期债务情况**：\n"
+                    for debt in debts:
+                        remaining = debt['total_amount'] - debt['paid_amount']
+                        debts_context += f"- {debt['debt_name']}: 总额{debt['total_amount']:.0f}元，已还{debt['paid_amount']:.0f}元，剩余{remaining:.0f}元"
+                        if debt['total_periods'] > 0:
+                            debts_context += f"（{debt['current_period']}/{debt['total_periods']}期）"
+                        debts_context += f"，状态：{debt['status']}\n"
+                    system_prompt += debts_context
 
                 if budget_data:
-                    budget_summary = self._calculate_budget_summary(budget_data, expenses)
-                    budget_context = (
-                        f"\n\n**本月预算情况**：\n"
-                        f"- 可变支出预算: {budget_summary['total']:.0f}元\n"
-                        f"- 已消费: {budget_summary['spent']:.0f}元\n"
-                        f"- 剩余: {budget_summary['remaining']:.0f}元\n"
-                    )
+                    # 构建完整的预算明细
+                    budget_context = f"\n\n**本月预算明细**：\n"
+
+                    # 按类型分组
+                    income_items = [b for b in budget_data if b["type"] == "收入"]
+                    fixed_expense_items = [b for b in budget_data if b["type"] == "固定支出"]
+                    variable_expense_items = [b for b in budget_data if b["type"] == "可变支出"]
+                    savings_items = [b for b in budget_data if b["type"] == "储蓄"]
+
+                    # 收入
+                    if income_items:
+                        budget_context += "📈 收入：\n"
+                        for item in income_items:
+                            budget_context += f"  - {item['category']}: {item['budget_amount']:.0f}元\n"
+
+                    # 固定支出
+                    if fixed_expense_items:
+                        budget_context += "🏠 固定支出：\n"
+                        for item in fixed_expense_items:
+                            budget_context += f"  - {item['category']}: {item['budget_amount']:.0f}元\n"
+
+                    # 可变支出
+                    if variable_expense_items:
+                        budget_context += "💰 可变支出：\n"
+                        for item in variable_expense_items:
+                            budget_context += f"  - {item['category']}: {item['budget_amount']:.0f}元\n"
+
+                        # 计算可变支出的执行情况
+                        total_variable_budget = sum(b["budget_amount"] for b in variable_expense_items)
+                        total_spent = sum(e["amount"] for e in expenses)
+                        remaining = total_variable_budget - total_spent
+                        budget_context += f"  已消费: {total_spent:.0f}元，剩余: {remaining:.0f}元\n"
+
+                    # 储蓄
+                    if savings_items:
+                        budget_context += "💎 储蓄计划：\n"
+                        for item in savings_items:
+                            budget_context += f"  - {item['category']}: {item['budget_amount']:.0f}元\n"
+
                     system_prompt += budget_context
 
             except Exception as e:
