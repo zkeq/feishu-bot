@@ -116,8 +116,11 @@ class FinanceManagerBot(BaseBot):
             # 5. 生成交互式卡片
             card = self._build_interactive_card(ai_response, json_data)
 
-            # 6. 发送卡片
-            self.client.send_message(chat_id, card, msg_type="interactive")
+            # 6. 更新状态消息为最终结果
+            if status_msg_id:
+                self.client.update_message(status_msg_id, card)
+            else:
+                self.client.send_message(chat_id, card, msg_type="interactive")
 
             return "已发送财务分析结果"
 
@@ -230,6 +233,22 @@ class FinanceManagerBot(BaseBot):
         for part in parts:
             if part.kind == "text" and part.text:
                 content.append({"type": "text", "text": part.text})
+            elif part.kind == "image" and part.image_key and part.message_id:
+                # 获取图片并转换为 base64
+                try:
+                    import base64
+                    image_data = self.client.get_image_resource(part.message_id, part.image_key)
+                    if image_data:
+                        base64_image = base64.b64encode(image_data).decode('utf-8')
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        })
+                        logger.info(f"已添加图片到 AI 消息: image_key={part.image_key}")
+                except Exception as e:
+                    logger.error(f"获取图片失败: {e}", exc_info=True)
 
         # 获取当前日期信息
         now = datetime.now()
@@ -343,7 +362,7 @@ class FinanceManagerBot(BaseBot):
             ],
         }
 
-        self.client.update_message(message_id, card, msg_type="interactive")
+        self.client.update_message(message_id, card)
 
     def _extract_json_data(self, ai_response: str) -> Optional[Dict[str, Any]]:
         """从 AI 响应中提取 JSON 数据"""
