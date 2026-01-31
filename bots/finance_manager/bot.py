@@ -5,6 +5,7 @@
 import json
 import re
 import logging
+import requests
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
@@ -92,10 +93,18 @@ class FinanceManagerBot(BaseBot):
             # 3. 提取 JSON 数据
             json_data = self._extract_json_data(ai_response)
 
-            # 4. 不自动保存数据，而是通过按钮让用户确认
+            # 4. 提取图片信息（如果有）
+            if json_data:
+                images = [part for part in parts if part.kind == "image" and part.image_key]
+                if images:
+                    json_data["image_key"] = images[0].image_key
+                    json_data["image_message_id"] = images[0].message_id
+                    logger.info(f"检测到图片: image_key={images[0].image_key}")
+
+            # 5. 不自动保存数据，而是通过按钮让用户确认
             # 敏感操作需要用户手动确认
 
-            # 5. 生成交互式卡片（包含确认按钮）
+            # 6. 生成交互式卡片（包含确认按钮）
             card = self._build_interactive_card(ai_response, json_data, user_id)
 
             # 6. 更新状态消息为最终结果
@@ -605,6 +614,22 @@ class FinanceManagerBot(BaseBot):
             budget_type = data.get("budget_type", "可变支出")
             notes = data.get("notes", "")
 
+            # 处理收据图片（如果有）
+            receipt_image_token = ""
+            if "image_key" in data and "image_message_id" in data:
+                # 获取 access_token
+                access_token = self.bitable_manager._get_access_token()
+                if access_token:
+                    # 上传图片并获取 file_token
+                    file_token = self._upload_image_to_bitable(
+                        access_token,
+                        data["image_message_id"],
+                        data["image_key"]
+                    )
+                    if file_token:
+                        receipt_image_token = file_token
+                        logger.info(f"收据图片已上传: {file_token}")
+
             # 1. 保存消费记录
             expense_data = {
                 "user_id": user_id,
@@ -614,7 +639,7 @@ class FinanceManagerBot(BaseBot):
                 "payment_method": payment_method,
                 "merchant": merchant,
                 "budget_type": budget_type,
-                "receipt_image": "",  # 如果有图片可以在这里添加
+                "receipt_image": receipt_image_token,
                 "notes": notes,
                 "create_time": int(datetime.now().timestamp() * 1000)
             }
@@ -688,38 +713,6 @@ class FinanceManagerBot(BaseBot):
                         {"actual_amount": new_actual}
                     )
                     logger.info(f"更新总预算: {budget_type} {total_budget['actual_amount']} -> {new_actual}")
-
-            # 4. 如果是花呗/信用卡消费，更新债务信息
-            if payment_method in ["花呗", "信用卡"]:
-                debt = self.bitable_manager.query_debt(user_id, payment_method)
-                if debt:
-                    # 累加债务总额（关键修复：累加而不是替换）
-                    new_total = debt["total_amount"] + amount
-                    self.bitable_manager.update_debt(
-                        debt["record_id"],
-                        {
-                            "total_amount": new_total,
-                            "status": "还款中"
-                        }
-                    )
-                    logger.info(f"累加债务: {payment_method} {debt['total_amount']} -> {new_total}")
-                else:
-                    # 创建新债务记录
-                    debt_data = {
-                        "user_id": user_id,
-                        "debt_type": payment_method,
-                        "debt_name": payment_method,
-                        "total_amount": amount,
-                        "paid_amount": 0,
-                        "total_periods": 1,
-                        "current_period": 1,
-                        "period_amount": amount,
-                        "next_payment_date": "",
-                        "status": "还款中",
-                        "notes": f"消费产生的{payment_method}债务"
-                    }
-                    self.bitable_manager.add_debt(debt_data)
-                    logger.info(f"创建债务: {payment_method} {amount}元")
 
             logger.info(f"消费记录完成（含表联动）: {merchant} {amount}元")
 
@@ -835,6 +828,30 @@ class FinanceManagerBot(BaseBot):
                 # 获取消费建议
                 return self._handle_get_advice(user_id)
 
+            elif action == "refresh":
+                # 刷新数据 - 重新显示首页
+                return self._handle_start_command(chat_id, [])
+
+            elif action == "edit_budget":
+                # 编辑预算计划 - 返回使用说明
+                self._send_feature_guide(chat_id, "edit_budget")
+                return {"toast": {"type": "success", "content": "已发送使用说明"}}
+
+            elif action == "financial_query":
+                # 财务询问 - 返回使用说明
+                self._send_feature_guide(chat_id, "financial_query")
+                return {"toast": {"type": "success", "content": "已发送使用说明"}}
+
+            elif action == "record_expense":
+                # 记录消费 - 返回使用说明
+                self._send_feature_guide(chat_id, "record_expense")
+                return {"toast": {"type": "success", "content": "已发送使用说明"}}
+
+            elif action == "debt_management":
+                # 负债管理 - 返回使用说明
+                self._send_feature_guide(chat_id, "debt_management")
+                return {"toast": {"type": "success", "content": "已发送使用说明"}}
+
             else:
                 return {
                     "toast": {
@@ -851,6 +868,50 @@ class FinanceManagerBot(BaseBot):
                     "content": f"操作失败: {str(e)}"
                 }
             }
+
+    def _send_feature_guide(self, chat_id: str, feature: str):
+        """发送功能使用说明到聊天"""
+        guides = {
+            "edit_budget": {
+                "title": "📝 编辑预算计划",
+                "content": "直接发消息告诉我你的预算计划！\n\n**示例：**\n```\n本月收入8.8w，支出预算：房租1800、个人费用2000、应急资金200\n```\n\n支持 2k=2000元，1.5w=15000元"
+            },
+            "financial_query": {
+                "title": "💬 财务询问",
+                "content": "直接问我财务问题，我会查数据库回答！\n\n**示例：**\n• 我这个月还剩多少预算？\n• 花呗还欠多少？\n• 我能买XX吗？"
+            },
+            "record_expense": {
+                "title": "💸 记录消费",
+                "content": "发消息或发图片记录消费！\n\n**示例：**\n```\n在爱家驿站买水花了6.5元，用花呗付的\n```\n\n或直接发送收据照片，我会自动识别"
+            },
+            "debt_management": {
+                "title": "💳 负债管理",
+                "content": "告诉我你的负债情况！\n\n**示例：**\n```\n买了iPhone，分3期，每期1333元\n花呗现在欠1500元\n```\n\n💡 只有明确说\"分期\"的才进债务表"
+            }
+        }
+
+        guide = guides.get(feature, {
+            "title": "功能说明",
+            "content": "功能开发中..."
+        })
+
+        # 构建卡片消息
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": guide["title"]},
+                "template": "blue"
+            },
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": guide["content"]}
+                }
+            ]
+        }
+
+        # 发送消息
+        self.client.send_message(chat_id, card, msg_type="interactive")
 
     def _handle_confirm_save(self, action_value: Dict[str, Any], user_id: str, chat_id: str) -> Dict[str, Any]:
         """处理确认保存操作"""
@@ -1143,3 +1204,49 @@ class FinanceManagerBot(BaseBot):
         card = self.card_generator.build_spending_advice_card(advice_list, budget_summary)
 
         return {"card": card}
+
+    def _upload_image_to_bitable(self, access_token: str, message_id: str, image_key: str) -> Optional[str]:
+        """上传图片到多维表格并返回 file_token"""
+        try:
+            logger.info(f"开始上传收据图片: message_id={message_id}, image_key={image_key}")
+
+            # 1. 从飞书消息中获取图片数据
+            image_data = self.client.get_image_resource(message_id, image_key)
+            if not image_data:
+                logger.error("获取图片数据失败")
+                return None
+
+            # 2. 上传图片到飞书文件系统
+            upload_url = "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all"
+
+            files = {
+                'file': ('receipt_image.jpg', image_data, 'image/jpeg')
+            }
+            data = {
+                'file_name': 'receipt_image.jpg',
+                'parent_type': 'bitable_image',
+                'parent_node': self.bitable_manager.app_token,
+                'size': str(len(image_data))
+            }
+            headers = {
+                "Authorization": f"Bearer {access_token}"
+            }
+
+            upload_response = requests.post(upload_url, headers=headers, files=files, data=data)
+
+            if upload_response.status_code == 200:
+                result = upload_response.json()
+                if result.get("code") == 0:
+                    file_token = result.get("data", {}).get("file_token")
+                    logger.info(f"收据图片上传成功: file_token={file_token}")
+                    return file_token
+                else:
+                    logger.error(f"图片上传失败: {result}")
+                    return None
+            else:
+                logger.error(f"图片上传请求失败: {upload_response.text}")
+                return None
+
+        except Exception as e:
+            logger.error(f"上传图片异常: {e}", exc_info=True)
+            return None

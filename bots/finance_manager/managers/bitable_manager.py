@@ -526,6 +526,14 @@ class BitableManager:
         """添加消费记录"""
         fields_mapping = self.expense_table.get("fields", {})
 
+        # 处理收据图片字段（附件格式）
+        receipt_image_value = expense_data.get("receipt_image", "")
+        if receipt_image_value:
+            # 附件字段需要是对象列表格式
+            receipt_image_field = [{"file_token": receipt_image_value}]
+        else:
+            receipt_image_field = []
+
         fields = {
             fields_mapping.get("user_id"): [{"id": expense_data.get("user_id", "")}],  # 人员字段格式
             fields_mapping.get("expense_time"): expense_data.get("expense_time", ""),
@@ -534,7 +542,7 @@ class BitableManager:
             fields_mapping.get("payment_method"): expense_data.get("payment_method", ""),
             fields_mapping.get("merchant"): expense_data.get("merchant", ""),
             fields_mapping.get("budget_type"): expense_data.get("budget_type", ""),
-            fields_mapping.get("receipt_image"): expense_data.get("receipt_image", ""),
+            fields_mapping.get("receipt_image"): receipt_image_field,
             fields_mapping.get("notes"): expense_data.get("notes", ""),
             fields_mapping.get("create_time"): expense_data.get("create_time", "")
         }
@@ -582,14 +590,14 @@ class BitableManager:
             fields = record.get("fields", {})
             debts.append({
                 "record_id": record.get("record_id"),
-                "debt_type": fields.get("债务类型", ""),
-                "debt_name": fields.get("债务名称", ""),
+                "debt_type": self._extract_text_value(fields.get("债务类型", "")),
+                "debt_name": self._extract_text_value(fields.get("债务名称", "")),
                 "total_amount": fields.get("总金额", 0),
                 "paid_amount": fields.get("已还金额", 0),
                 "total_periods": fields.get("总期数", 0),
                 "current_period": fields.get("当前期数", 0),
                 "period_amount": fields.get("每期金额", 0),
-                "status": fields.get("状态", "")
+                "status": self._extract_text_value(fields.get("状态", ""))
             })
 
         return debts
@@ -604,14 +612,14 @@ class BitableManager:
             fields = record.get("fields", {})
             return {
                 "record_id": record.get("record_id"),
-                "debt_type": fields.get("债务类型", ""),
-                "debt_name": fields.get("债务名称", ""),
+                "debt_type": self._extract_text_value(fields.get("债务类型", "")),
+                "debt_name": self._extract_text_value(fields.get("债务名称", "")),
                 "total_amount": fields.get("总金额", 0),
                 "paid_amount": fields.get("已还金额", 0),
                 "total_periods": fields.get("总期数", 0),
                 "current_period": fields.get("当前期数", 0),
                 "period_amount": fields.get("每期金额", 0),
-                "status": fields.get("状态", "")
+                "status": self._extract_text_value(fields.get("状态", ""))
             }
         return None
 

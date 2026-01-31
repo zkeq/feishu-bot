@@ -58,19 +58,13 @@ class FinancialCardGenerator:
 
         # 添加负余额的账户（信用卡、花呗等）
         negative_accounts = [acc for acc in accounts if acc["balance"] < 0]
-        for acc in negative_accounts[:3]:
+        for acc in negative_accounts:
             balance_str = f"{abs(acc['balance']):,.0f}"
             debts_preview += f"💳 {acc['account_name']}: {balance_str}元\n"
 
-        # 添加债务表中的债务
-        remaining_slots = 3 - len(negative_accounts)
-        if remaining_slots > 0 and debts:
-            for debt in debts[:remaining_slots]:
-                debts_preview += f"💳 {debt['debt_name']}: {debt['total_amount']:,.0f}元\n"
-
-        total_debt_count = len(negative_accounts) + len(debts)
-        if total_debt_count > 3:
-            debts_preview += f"...还有 {total_debt_count - 3} 笔债务"
+        # 添加债务表中的所有债务
+        for debt in debts:
+            debts_preview += f"💳 {debt['debt_name']}: {debt['total_amount']:,.0f}元\n"
 
         if not debts_preview:
             debts_preview = "✅ 无债务"
