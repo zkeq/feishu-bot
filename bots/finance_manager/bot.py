@@ -92,29 +92,11 @@ class FinanceManagerBot(BaseBot):
             # 3. 提取 JSON 数据
             json_data = self._extract_json_data(ai_response)
 
-            # 4. 根据 action 类型处理
-            if json_data and user_id:
-                action = json_data.get("action")
+            # 4. 不自动保存数据，而是通过按钮让用户确认
+            # 敏感操作需要用户手动确认
 
-                if action == "update_accounts":
-                    # 更新账户信息
-                    self._handle_update_accounts(json_data, user_id)
-                elif action == "create_budget":
-                    # 创建预算
-                    self._handle_create_budget(json_data, user_id)
-                elif action == "record_expense":
-                    # 记录消费
-                    self._handle_record_expense(json_data, user_id)
-                elif action == "repay_debt":
-                    # 还款
-                    self._handle_repay_debt(json_data, user_id)
-                elif action == "spending_advice":
-                    # 消费建议（不需要保存）
-                    pass
-                    pass
-
-            # 5. 生成交互式卡片
-            card = self._build_interactive_card(ai_response, json_data)
+            # 5. 生成交互式卡片（包含确认按钮）
+            card = self._build_interactive_card(ai_response, json_data, user_id)
 
             # 6. 更新状态消息为最终结果
             if status_msg_id:
@@ -384,7 +366,7 @@ class FinanceManagerBot(BaseBot):
             return None
 
     def _build_interactive_card(
-        self, ai_response: str, json_data: Optional[Dict[str, Any]]
+        self, ai_response: str, json_data: Optional[Dict[str, Any]], user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """生成交互式卡片"""
         # 移除 JSON 代码块，只保留分析内容
@@ -406,21 +388,45 @@ class FinanceManagerBot(BaseBot):
         }
 
         # 根据 action 类型添加按钮
-        if json_data:
+        if json_data and user_id:
             action = json_data.get("action")
 
-            if action == "update_accounts":
-                # 添加"查看详情"按钮
+            # 为需要确认的操作添加按钮
+            if action in ["update_accounts", "create_budget", "record_expense", "repay_debt"]:
+                action_buttons = []
+
+                # 添加确认保存按钮
+                action_text_map = {
+                    "update_accounts": "💾 保存账户信息",
+                    "create_budget": "💾 保存预算",
+                    "record_expense": "💾 保存消费记录",
+                    "repay_debt": "💾 保存还款记录"
+                }
+
+                action_buttons.append({
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": action_text_map.get(action, "💾 保存")},
+                    "type": "primary",
+                    "value": {
+                        "action": "confirm_save",
+                        "data_action": action,
+                        "json_data": json.dumps(json_data),
+                        "user_id": user_id
+                    }
+                })
+
+                # 如果是 update_accounts，还添加查看详情按钮
+                if action == "update_accounts":
+                    action_buttons.append({
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "📊 查看详情"},
+                        "type": "default",
+                        "value": {"action": "view_details"}
+                    })
+
                 card["elements"].append({
                     "tag": "action",
-                    "actions": [
-                        {
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "📊 查看详情"},
-                            "type": "default",
-                            "value": {"action": "view_details"}
-                        }
-                    ]
+                    "actions": action_buttons
                 })
 
         return card
@@ -442,7 +448,7 @@ class FinanceManagerBot(BaseBot):
                     "account_name": account.get("name"),
                     "account_type": account.get("type"),
                     "balance": account.get("balance", 0),
-                    "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "update_time": int(datetime.now().timestamp() * 1000),
                     "status": "正常",
                     "notes": account.get("notes", "")
                 }
@@ -514,7 +520,7 @@ class FinanceManagerBot(BaseBot):
                     "category": item.get("category"),
                     "budget_amount": item.get("amount", 0),
                     "actual_amount": 0,
-                    "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "create_time": int(datetime.now().timestamp() * 1000),
                     "notes": item.get("notes", "")
                 }
 
@@ -538,7 +544,7 @@ class FinanceManagerBot(BaseBot):
                     "category": item.get("subcategory", item.get("category")),  # 具体类别
                     "budget_amount": item.get("amount", 0),
                     "actual_amount": 0,
-                    "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "create_time": int(datetime.now().timestamp() * 1000),
                     "notes": item.get("notes", "")
                 }
 
@@ -569,7 +575,7 @@ class FinanceManagerBot(BaseBot):
         try:
             merchant = data.get("merchant", "")
             amount = data.get("amount", 0)
-            expense_time = data.get("time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            expense_time = data.get("time", int(datetime.now().timestamp() * 1000))
             payment_method = data.get("payment_method", "")
             category = data.get("category", "")
             budget_type = data.get("budget_type", "可变支出")
@@ -586,7 +592,7 @@ class FinanceManagerBot(BaseBot):
                 "budget_type": budget_type,
                 "receipt_image": "",  # 如果有图片可以在这里添加
                 "notes": notes,
-                "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "create_time": int(datetime.now().timestamp() * 1000)
             }
             self.bitable_manager.add_expense(expense_data)
             logger.info(f"记录消费: {merchant} {amount}元")
@@ -599,7 +605,7 @@ class FinanceManagerBot(BaseBot):
                     new_balance = account["balance"] - amount
                     self.bitable_manager.update_account(
                         account["record_id"],
-                        {"balance": new_balance, "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                        {"balance": new_balance, "update_time": int(datetime.now().timestamp() * 1000)}
                     )
                     logger.info(f"更新账户余额: {payment_method} {account['balance']} -> {new_balance}")
 
@@ -701,7 +707,7 @@ class FinanceManagerBot(BaseBot):
                         account["record_id"],
                         {
                             "balance": new_balance,
-                            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            "update_time": int(datetime.now().timestamp() * 1000)
                         }
                     )
                     logger.info(f"扣除账户余额: {payment_source} {account['balance']} -> {new_balance}")
@@ -717,7 +723,7 @@ class FinanceManagerBot(BaseBot):
                 "budget_type": "固定支出",
                 "receipt_image": "",
                 "notes": f"还款{debt_name}",
-                "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "create_time": int(datetime.now().timestamp() * 1000)
             }
             self.bitable_manager.add_expense(expense_data)
 
@@ -742,7 +748,11 @@ class FinanceManagerBot(BaseBot):
             action = action_value.get("action")
             logger.info(f"处理卡片交互: {action}")
 
-            if action == "view_details":
+            if action == "confirm_save":
+                # 确认保存数据
+                return self._handle_confirm_save(action_value, user_id, chat_id)
+
+            elif action == "view_details":
                 # 查看详情 - 显示财务状态卡片
                 return self._handle_view_details(user_id)
 
@@ -780,6 +790,58 @@ class FinanceManagerBot(BaseBot):
                 "toast": {
                     "type": "error",
                     "content": f"操作失败: {str(e)}"
+                }
+            }
+
+    def _handle_confirm_save(self, action_value: Dict[str, Any], user_id: str, chat_id: str) -> Dict[str, Any]:
+        """处理确认保存操作"""
+        try:
+            # 从按钮值中提取数据
+            data_action = action_value.get("data_action")
+            json_data_str = action_value.get("json_data")
+            stored_user_id = action_value.get("user_id")
+
+            # 验证用户ID
+            if stored_user_id != user_id:
+                return {
+                    "toast": {
+                        "type": "error",
+                        "content": "用户验证失败"
+                    }
+                }
+
+            # 解析JSON数据
+            json_data = json.loads(json_data_str)
+
+            # 根据操作类型调用相应的处理方法
+            if data_action == "update_accounts":
+                self._handle_update_accounts(json_data, user_id)
+                message = "✅ 账户信息已保存"
+            elif data_action == "create_budget":
+                self._handle_create_budget(json_data, user_id)
+                message = "✅ 预算已保存"
+            elif data_action == "record_expense":
+                self._handle_record_expense(json_data, user_id)
+                message = "✅ 消费记录已保存"
+            elif data_action == "repay_debt":
+                self._handle_repay_debt(json_data, user_id)
+                message = "✅ 还款记录已保存"
+            else:
+                message = "❌ 未知操作类型"
+
+            return {
+                "toast": {
+                    "type": "success",
+                    "content": message
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"保存数据失败: {e}", exc_info=True)
+            return {
+                "toast": {
+                    "type": "error",
+                    "content": f"保存失败: {str(e)}"
                 }
             }
 

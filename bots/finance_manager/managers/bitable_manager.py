@@ -291,7 +291,7 @@ class BitableManager:
         fields_mapping = self.accounts_table.get("fields", {})
 
         fields = {
-            fields_mapping.get("user_id"): account_data.get("user_id", ""),
+            fields_mapping.get("user_id"): [{"id": account_data.get("user_id", "")}],  # 人员字段格式
             fields_mapping.get("account_name"): account_data.get("account_name", ""),
             fields_mapping.get("account_type"): account_data.get("account_type", ""),
             fields_mapping.get("balance"): account_data.get("balance", 0),
@@ -433,7 +433,7 @@ class BitableManager:
         fields_mapping = self.budget_table.get("fields", {})
 
         fields = {
-            fields_mapping.get("user_id"): budget_data.get("user_id", ""),
+            fields_mapping.get("user_id"): [{"id": budget_data.get("user_id", "")}],  # 人员字段格式
             fields_mapping.get("month"): budget_data.get("month", ""),
             fields_mapping.get("type"): budget_data.get("type", ""),
             fields_mapping.get("category"): budget_data.get("category", ""),
@@ -509,7 +509,7 @@ class BitableManager:
         fields_mapping = self.expense_table.get("fields", {})
 
         fields = {
-            fields_mapping.get("user_id"): expense_data.get("user_id", ""),
+            fields_mapping.get("user_id"): [{"id": expense_data.get("user_id", "")}],  # 人员字段格式
             fields_mapping.get("expense_time"): expense_data.get("expense_time", ""),
             fields_mapping.get("amount"): expense_data.get("amount", 0),
             fields_mapping.get("category"): expense_data.get("category", ""),
@@ -602,7 +602,7 @@ class BitableManager:
         fields_mapping = self.debt_table.get("fields", {})
 
         fields = {
-            fields_mapping.get("user_id"): debt_data.get("user_id", ""),
+            fields_mapping.get("user_id"): [{"id": debt_data.get("user_id", "")}],  # 人员字段格式
             fields_mapping.get("debt_type"): debt_data.get("debt_type", ""),
             fields_mapping.get("debt_name"): debt_data.get("debt_name", ""),
             fields_mapping.get("total_amount"): debt_data.get("total_amount", 0),
