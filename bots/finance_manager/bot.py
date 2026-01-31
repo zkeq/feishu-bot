@@ -179,9 +179,18 @@ class FinanceManagerBot(BaseBot):
         self, accounts: List[Dict], debts: List[Dict]
     ) -> Dict[str, float]:
         """计算财务汇总"""
+        # 资产：账户余额为正的总和
         total_assets = sum(acc["balance"] for acc in accounts if acc["balance"] > 0)
-        total_liabilities = sum(abs(debt["total_amount"]) for debt in debts)
+
+        # 负债：账户余额为负的总和（取绝对值）+ 债务表中的债务
+        account_liabilities = sum(abs(acc["balance"]) for acc in accounts if acc["balance"] < 0)
+        debt_liabilities = sum(abs(debt["total_amount"]) for debt in debts)
+        total_liabilities = account_liabilities + debt_liabilities
+
+        # 净资产 = 总资产 - 总负债
         net_worth = total_assets - total_liabilities
+
+        # 负债率
         debt_ratio = (total_liabilities / total_assets * 100) if total_assets > 0 else 0
 
         return {

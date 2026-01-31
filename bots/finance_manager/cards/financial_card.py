@@ -47,7 +47,7 @@ class FinancialCardGenerator:
         for i, acc in enumerate(accounts[:3]):  # 只显示前3个
             icon = "💰" if acc["balance"] >= 0 else "💳"
             balance_str = f"{acc['balance']:,.0f}" if acc['balance'] >= 0 else f"-{abs(acc['balance']):,.0f}"
-            accounts_preview += f"{icon} {acc['name']}: {balance_str}元\n"
+            accounts_preview += f"{icon} {acc['account_name']}: {balance_str}元\n"
         if len(accounts) > 3:
             accounts_preview += f"...还有 {len(accounts) - 3} 个账户"
 
@@ -55,7 +55,7 @@ class FinancialCardGenerator:
         debts_preview = ""
         if debts:
             for i, debt in enumerate(debts[:2]):  # 只显示前2个
-                debts_preview += f"💳 {debt['name']}: {debt['total_amount']:,.0f}元\n"
+                debts_preview += f"💳 {debt['debt_name']}: {debt['total_amount']:,.0f}元\n"
             if len(debts) > 2:
                 debts_preview += f"...还有 {len(debts) - 2} 笔债务"
         else:
@@ -248,15 +248,15 @@ class FinancialCardGenerator:
         for acc in accounts:
             icon = "💰" if acc["balance"] >= 0 else "💳"
             balance_str = f"{acc['balance']:,.0f}" if acc['balance'] >= 0 else f"-{abs(acc['balance']):,.0f}"
-            accounts_text += f"{icon} **{acc['name']}**: {balance_str}元\n"
+            accounts_text += f"{icon} **{acc['account_name']}**: {balance_str}元\n"
 
         # 构建债务列表文本
         debts_text = ""
         for debt in debts:
             if debt.get("total_periods", 0) > 0:
-                debts_text += f"📅 **{debt['name']}**: {debt['total_amount']:,.0f}元 ({debt['current_period']}/{debt['total_periods']}期)\n"
+                debts_text += f"📅 **{debt['debt_name']}**: {debt['total_amount']:,.0f}元 ({debt['current_period']}/{debt['total_periods']}期)\n"
             else:
-                debts_text += f"💳 **{debt['name']}**: {debt['total_amount']:,.0f}元\n"
+                debts_text += f"💳 **{debt['debt_name']}**: {debt['total_amount']:,.0f}元\n"
 
         # 健康度评估
         if debt_ratio < 30:

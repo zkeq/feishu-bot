@@ -246,6 +246,22 @@ class BitableManager:
 
     # ========== 账户表操作 ==========
 
+    @staticmethod
+    def _extract_text_value(field_value: Any) -> str:
+        """从多维表格字段值中提取文本
+
+        多维表格的某些字段类型（如多行文本）返回结构化数据：
+        [{'text': '文本内容', 'type': 'text'}]
+
+        此方法提取实际的文本内容
+        """
+        if isinstance(field_value, str):
+            return field_value
+        elif isinstance(field_value, list) and len(field_value) > 0:
+            if isinstance(field_value[0], dict) and 'text' in field_value[0]:
+                return field_value[0]['text']
+        return str(field_value) if field_value else ""
+
     def get_user_accounts(self, user_id: str) -> List[Dict[str, Any]]:
         """获取用户的所有账户"""
         filter_condition = self.build_filter([
@@ -259,11 +275,11 @@ class BitableManager:
             fields = record.get("fields", {})
             accounts.append({
                 "record_id": record.get("record_id"),
-                "account_name": fields.get("账户名称", ""),
-                "account_type": fields.get("账户类型", ""),
+                "account_name": self._extract_text_value(fields.get("账户名称", "")),
+                "account_type": self._extract_text_value(fields.get("账户类型", "")),
                 "balance": fields.get("当前余额", 0),
-                "status": fields.get("状态", ""),
-                "notes": fields.get("备注", "")
+                "status": self._extract_text_value(fields.get("状态", "")),
+                "notes": self._extract_text_value(fields.get("备注", ""))
             })
 
         return accounts
