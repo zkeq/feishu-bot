@@ -151,7 +151,8 @@ class BitableManager:
     def add_record(
         self,
         table_config: Dict[str, Any],
-        fields: Dict[str, Any]
+        fields: Dict[str, Any],
+        user_id_type: str = "user_id"
     ) -> bool:
         """
         添加记录到表格
@@ -159,6 +160,7 @@ class BitableManager:
         Args:
             table_config: 表格配置
             fields: 字段数据
+            user_id_type: 用户 ID 类型 (user_id, open_id, union_id)
 
         Returns:
             是否成功
@@ -178,7 +180,7 @@ class BitableManager:
                 "Content-Type": "application/json"
             }
 
-            add_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.app_token}/tables/{table_id}/records"
+            add_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.app_token}/tables/{table_id}/records?user_id_type={user_id_type}"
             payload = {"fields": fields}
 
             logger.info(f"添加记录: {fields}")
@@ -382,8 +384,8 @@ class BitableManager:
 
         for record in records:
             fields = record.get("fields", {})
-            budget_type = fields.get("类型", "")
-            category = fields.get("类别名称", "")
+            budget_type = self._extract_text_value(fields.get("类型", ""))
+            category = self._extract_text_value(fields.get("类别名称", ""))
 
             if category:
                 if budget_type == "收入":
@@ -408,9 +410,9 @@ class BitableManager:
             fields = record.get("fields", {})
             budgets.append({
                 "record_id": record.get("record_id"),
-                "month": fields.get("月份", ""),
-                "type": fields.get("类型", ""),
-                "category": fields.get("类别名称", ""),
+                "month": self._extract_text_value(fields.get("月份", "")),
+                "type": self._extract_text_value(fields.get("类型", "")),
+                "category": self._extract_text_value(fields.get("类别名称", "")),
                 "budget_amount": fields.get("预算金额", 0),
                 "actual_amount": fields.get("实际金额", 0)
             })
@@ -436,9 +438,9 @@ class BitableManager:
             fields = record.get("fields", {})
             return {
                 "record_id": record.get("record_id"),
-                "month": fields.get("月份", ""),
-                "type": fields.get("类型", ""),
-                "category": fields.get("类别名称", ""),
+                "month": self._extract_text_value(fields.get("月份", "")),
+                "type": self._extract_text_value(fields.get("类型", "")),
+                "category": self._extract_text_value(fields.get("类别名称", "")),
                 "budget_amount": fields.get("预算金额", 0),
                 "actual_amount": fields.get("实际金额", 0)
             }
@@ -626,10 +628,14 @@ class BitableManager:
             fields_mapping.get("total_periods"): debt_data.get("total_periods", 0),
             fields_mapping.get("current_period"): debt_data.get("current_period", 0),
             fields_mapping.get("period_amount"): debt_data.get("period_amount", 0),
-            fields_mapping.get("next_payment_date"): debt_data.get("next_payment_date", ""),
             fields_mapping.get("status"): debt_data.get("status", "进行中"),
             fields_mapping.get("notes"): debt_data.get("notes", "")
         }
+
+        # 只有当日期字段有值时才添加（避免空字符串导致错误）
+        next_payment_date = debt_data.get("next_payment_date")
+        if next_payment_date:
+            fields[fields_mapping.get("next_payment_date")] = next_payment_date
 
         return self.add_record(self.debt_table, fields)
 

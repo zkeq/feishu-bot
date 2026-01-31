@@ -42,23 +42,37 @@ class FinancialCardGenerator:
         budget_total = budget_summary.get("total", 0)
         execution_rate = (budget_spent / budget_total * 100) if budget_total > 0 else 0
 
-        # 构建账户概览
+        # 构建账户概览（只显示正余额的账户）
         accounts_preview = ""
-        for i, acc in enumerate(accounts[:3]):  # 只显示前3个
-            icon = "💰" if acc["balance"] >= 0 else "💳"
-            balance_str = f"{acc['balance']:,.0f}" if acc['balance'] >= 0 else f"-{abs(acc['balance']):,.0f}"
-            accounts_preview += f"{icon} {acc['account_name']}: {balance_str}元\n"
-        if len(accounts) > 3:
-            accounts_preview += f"...还有 {len(accounts) - 3} 个账户"
+        positive_accounts = [acc for acc in accounts if acc["balance"] >= 0]
+        for i, acc in enumerate(positive_accounts[:3]):  # 只显示前3个
+            balance_str = f"{acc['balance']:,.0f}"
+            accounts_preview += f"💰 {acc['account_name']}: {balance_str}元\n"
+        if len(positive_accounts) > 3:
+            accounts_preview += f"...还有 {len(positive_accounts) - 3} 个账户"
+        if not accounts_preview:
+            accounts_preview = "暂无资产账户"
 
-        # 构建债务概览
+        # 构建债务概览（包含负余额的账户和债务表中的债务）
         debts_preview = ""
-        if debts:
-            for i, debt in enumerate(debts[:2]):  # 只显示前2个
+
+        # 添加负余额的账户（信用卡、花呗等）
+        negative_accounts = [acc for acc in accounts if acc["balance"] < 0]
+        for acc in negative_accounts[:3]:
+            balance_str = f"{abs(acc['balance']):,.0f}"
+            debts_preview += f"💳 {acc['account_name']}: {balance_str}元\n"
+
+        # 添加债务表中的债务
+        remaining_slots = 3 - len(negative_accounts)
+        if remaining_slots > 0 and debts:
+            for debt in debts[:remaining_slots]:
                 debts_preview += f"💳 {debt['debt_name']}: {debt['total_amount']:,.0f}元\n"
-            if len(debts) > 2:
-                debts_preview += f"...还有 {len(debts) - 2} 笔债务"
-        else:
+
+        total_debt_count = len(negative_accounts) + len(debts)
+        if total_debt_count > 3:
+            debts_preview += f"...还有 {total_debt_count - 3} 笔债务"
+
+        if not debts_preview:
             debts_preview = "✅ 无债务"
 
         card = {

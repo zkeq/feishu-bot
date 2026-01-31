@@ -244,29 +244,83 @@ class BotInstance:
 
             # 检查 Bot 是否有自定义的 handle_card_action 方法
             if hasattr(self.bot, 'handle_card_action') and callable(getattr(self.bot, 'handle_card_action')):
-                logger.info(f"[{self.bot_name}] 使用 Bot 自定义的卡片交互处理器")
+                logger.info(f"[{self.bot_name}] 使用 Bot 自定义的卡片交互处理器（异步模式）")
 
-                # 调用 Bot 的 handle_card_action 方法
-                result = self.bot.handle_card_action(action_value, user_id, chat_id)
+                # 立即返回响应，提示正在处理
+                toast = CallBackToast()
+                toast.type = "info"
+                toast.content = "⏳ 正在处理中，请稍候..."
 
-                # 构建响应
                 response = P2CardActionTriggerResponse()
+                response.toast = toast
 
-                if isinstance(result, dict):
-                    # 如果返回了 toast
-                    if "toast" in result:
-                        toast = CallBackToast()
-                        toast.type = result["toast"].get("type", "info")
-                        toast.content = result["toast"].get("content", "处理完成")
-                        response.toast = toast
+                logger.info(f"[{self.bot_name}] 立即返回响应，开始异步处理")
 
-                    # 如果返回了新卡片
-                    if "card" in result:
-                        # 更新原卡片
-                        if message_id:
-                            self.client.update_message(message_id, result["card"])
+                # 在后台线程中异步处理
+                def async_handle():
+                    try:
+                        logger.info(f"[{self.bot_name}] 后台线程开始处理卡片交互...")
 
-                logger.info(f"[{self.bot_name}] 卡片交互处理完成")
+                        # 调用 Bot 的 handle_card_action 方法
+                        result = self.bot.handle_card_action(action_value, user_id, chat_id)
+
+                        # 处理结果
+                        if isinstance(result, dict):
+                            # 如果返回了新卡片，更新原卡片
+                            if "card" in result and message_id:
+                                self.client.update_message(message_id, result["card"])
+                                logger.info(f"[{self.bot_name}] 已更新卡片")
+
+                            # 如果需要发送通知消息
+                            if "toast" in result and chat_id:
+                                # 通过新消息通知用户结果
+                                toast_content = result["toast"].get("content", "处理完成")
+                                toast_type = result["toast"].get("type", "info")
+
+                                # 根据类型选择图标
+                                icon_map = {
+                                    "success": "✅",
+                                    "error": "❌",
+                                    "warning": "⚠️",
+                                    "info": "ℹ️"
+                                }
+                                icon = icon_map.get(toast_type, "ℹ️")
+
+                                content = {
+                                    "config": {"wide_screen_mode": True},
+                                    "elements": [
+                                        {
+                                            "tag": "div",
+                                            "text": {"tag": "lark_md", "content": f"{icon} {toast_content}"}
+                                        }
+                                    ]
+                                }
+                                self.client.send_message(chat_id, content, msg_type="interactive")
+                                logger.info(f"[{self.bot_name}] 已发送处理结果通知")
+
+                        logger.info(f"[{self.bot_name}] 后台处理完成")
+
+                    except Exception as e:
+                        logger.error(f"[{self.bot_name}] 后台处理异常: {e}", exc_info=True)
+                        # 发送错误通知
+                        if chat_id:
+                            error_msg = f"❌ **处理失败**\\n\\n{str(e)}"
+                            content = {
+                                "config": {"wide_screen_mode": True},
+                                "elements": [
+                                    {
+                                        "tag": "div",
+                                        "text": {"tag": "lark_md", "content": error_msg}
+                                    }
+                                ]
+                            }
+                            self.client.send_message(chat_id, content, msg_type="interactive")
+
+                # 启动后台线程
+                bg_thread = threading.Thread(target=async_handle, daemon=True)
+                bg_thread.start()
+
+                logger.info(f"[{self.bot_name}] 卡片交互处理完成（已启动后台处理）")
                 logger.info("=" * 60)
                 return response
 
@@ -369,7 +423,6 @@ class BotInstance:
                         self.client.send_message(chat_id, content, msg_type="interactive")
 
             # 启动后台线程
-            import threading
             thread = threading.Thread(target=async_save, daemon=True)
             thread.start()
 

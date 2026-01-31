@@ -584,7 +584,22 @@ class FinanceManagerBot(BaseBot):
         try:
             merchant = data.get("merchant", "")
             amount = data.get("amount", 0)
-            expense_time = data.get("time", int(datetime.now().timestamp() * 1000))
+
+            # 处理时间字段 - 转换为Unix时间戳
+            expense_time_raw = data.get("time")
+            if expense_time_raw:
+                try:
+                    # 尝试解析字符串时间
+                    if isinstance(expense_time_raw, str):
+                        dt = datetime.strptime(expense_time_raw, "%Y-%m-%d %H:%M")
+                        expense_time = int(dt.timestamp() * 1000)
+                    else:
+                        expense_time = int(expense_time_raw)
+                except:
+                    expense_time = int(datetime.now().timestamp() * 1000)
+            else:
+                expense_time = int(datetime.now().timestamp() * 1000)
+
             payment_method = data.get("payment_method", "")
             category = data.get("category", "")
             budget_type = data.get("budget_type", "可变支出")
@@ -606,17 +621,52 @@ class FinanceManagerBot(BaseBot):
             self.bitable_manager.add_expense(expense_data)
             logger.info(f"记录消费: {merchant} {amount}元")
 
-            # 2. 更新账户余额（如果支付方式对应某个账户）
-            # 例如：支付宝、微信、银行卡等
-            if payment_method in ["支付宝", "微信", "银行卡", "现金"]:
-                account = self.bitable_manager.query_account(user_id, payment_method)
-                if account:
-                    new_balance = account["balance"] - amount
-                    self.bitable_manager.update_account(
-                        account["record_id"],
-                        {"balance": new_balance, "update_time": int(datetime.now().timestamp() * 1000)}
+            # 2. 更新账户余额 - 智能匹配支付方式和账户
+            # 查询用户的所有账户
+            user_accounts = self.bitable_manager.get_user_accounts(user_id)
+
+            # 使用AI匹配支付方式和账户名称
+            if user_accounts and payment_method:
+                account_names = [acc["account_name"] for acc in user_accounts]
+
+                # 调用AI判断支付方式对应哪个账户
+                match_prompt = f"""
+用户使用了"{payment_method}"支付。
+用户的账户列表：{', '.join(account_names)}
+
+请判断这个支付方式对应哪个账户。如果匹配，只返回账户名称；如果不匹配任何账户，返回"无"。
+
+规则：
+- 支付方式和账户名称可能不完全一样，但意思相同（如"花呗"对应"花呗"账户）
+- 如果是信用卡类支付，匹配包含"信用卡"或"卡"的账户
+- 如果完全不匹配，返回"无"
+
+只返回账户名称或"无"，不要其他解释。
+"""
+
+                try:
+                    ai_response = self.ai_client.call(
+                        messages=[{"role": "user", "content": match_prompt}],
+                        model=self.openai_model,
+                        temperature=0.1,
+                        max_tokens=50
                     )
-                    logger.info(f"更新账户余额: {payment_method} {account['balance']} -> {new_balance}")
+
+                    matched_account_name = ai_response.strip()
+
+                    if matched_account_name != "无" and matched_account_name in account_names:
+                        # 找到匹配的账户，更新余额
+                        account = self.bitable_manager.query_account(user_id, matched_account_name)
+                        if account:
+                            # 消费后余额减少（对于负债账户会变得更负）
+                            new_balance = account["balance"] - amount
+                            self.bitable_manager.update_account(
+                                account["record_id"],
+                                {"balance": new_balance, "update_time": int(datetime.now().timestamp() * 1000)}
+                            )
+                            logger.info(f"更新账户余额: {matched_account_name} {account['balance']} -> {new_balance}")
+                except Exception as e:
+                    logger.warning(f"AI匹配账户失败: {e}")
 
             # 3. 更新预算实际金额
             current_month = datetime.now().strftime("%Y-%m")
