@@ -178,7 +178,7 @@ class FinanceManagerBot(BaseBot):
                     "tag": "div",
                     "text": {
                         "tag": "lark_md",
-                        "content": "**欢迎使用财务管家！** 👋\\n\\n请先配置多维表格，然后开始记录您的财务信息。"
+                        "content": "**欢迎使用财务管家！** 👋\n\n请先配置多维表格，然后开始记录您的财务信息。"
                     }
                 }
             ]
@@ -328,7 +328,7 @@ class FinanceManagerBot(BaseBot):
     ) -> str:
         """调用 AI API（流式）"""
         self._update_status(
-            chat_id, status_msg_id, "**🚀 正在请求 AI 分析...**\\n\\n等待响应中..."
+            chat_id, status_msg_id, "**🚀 正在请求 AI 分析...**\n\n等待响应中..."
         )
 
         def update_callback(content: str):
@@ -336,7 +336,7 @@ class FinanceManagerBot(BaseBot):
             self._update_status(
                 chat_id,
                 status_msg_id,
-                f"**📝 正在分析中...**\\n\\n{preprocess_markdown_for_feishu(content)}\\n\\n_正在生成中..._",
+                f"**📝 正在分析中...**\n\n{preprocess_markdown_for_feishu(content)}\n\n_正在生成中..._",
             )
 
         result = self.ai_client.call_streaming(
