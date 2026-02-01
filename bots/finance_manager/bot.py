@@ -90,24 +90,33 @@ class FinanceManagerBot(BaseBot):
             # 获取用户输入的文本
             user_text = self._extract_user_text(parts)
 
-            # 1. 构建 AI 消息（包含上下文和历史记录）
-            messages = self._build_ai_messages_with_context(parts, user_id, chat_id)
+            # 1. 判断是否需要历史上下文
+            needs_history = False
+            if user_text:
+                needs_history = self._needs_history_context(user_text, chat_id)
 
-            # 2. 调用 AI 分析
+            # 2. 构建 AI 消息（根据判断结果决定是否包含历史记录）
+            if needs_history:
+                logger.info("用户询问涉及历史对话，将附带历史记录")
+                messages = self._build_ai_messages_with_context(parts, user_id, chat_id)
+            else:
+                messages = self._build_ai_messages_with_context(parts, user_id, None)
+
+            # 3. 调用 AI 分析
             self._update_status(chat_id, status_msg_id, "**🤖 正在分析您的财务信息...**")
             ai_response = self._call_ai_streaming(chat_id, messages, status_msg_id)
 
-            # 3. 保存对话历史
+            # 4. 保存对话历史
             if user_text:
                 self.chat_history.add_message(chat_id, "user", user_text)
             # 移除 JSON 代码块后保存 AI 回复
             clean_response = re.sub(r'```json[\s\S]*?```', '', ai_response).strip()
             self.chat_history.add_message(chat_id, "assistant", clean_response)
 
-            # 4. 提取 JSON 数据
+            # 5. 提取 JSON 数据
             json_data = self._extract_json_data(ai_response)
 
-            # 5. 提取图片信息（如果有）
+            # 6. 提取图片信息（如果有）
             if json_data:
                 images = [part for part in parts if part.kind == "image" and part.image_key]
                 if images:
@@ -115,13 +124,13 @@ class FinanceManagerBot(BaseBot):
                     json_data["image_message_id"] = images[0].message_id
                     logger.info(f"检测到图片: image_key={images[0].image_key}")
 
-            # 6. 不自动保存数据，而是通过按钮让用户确认
+            # 7. 不自动保存数据，而是通过按钮让用户确认
             # 敏感操作需要用户手动确认
 
-            # 7. 生成交互式卡片（包含确认按钮）
+            # 8. 生成交互式卡片（包含确认按钮）
             card = self._build_interactive_card(ai_response, json_data, user_id)
 
-            # 8. 更新状态消息为最终结果
+            # 9. 更新状态消息为最终结果
             if status_msg_id:
                 self.client.update_message(status_msg_id, card)
             else:
@@ -155,6 +164,65 @@ class FinanceManagerBot(BaseBot):
             if part.kind == "text" and part.text:
                 texts.append(part.text)
         return " ".join(texts)
+
+    def _needs_history_context(self, user_text: str, chat_id: str) -> bool:
+        """
+        使用 AI 判断用户的问题是否需要历史对话上下文
+
+        Args:
+            user_text: 用户输入的文本
+            chat_id: 会话 ID
+
+        Returns:
+            bool: 是否需要历史上下文
+        """
+        # 如果没有历史记录，不需要
+        if not self.chat_history.has_history(chat_id):
+            return False
+
+        # 获取最近的对话摘要
+        recent_context = self.chat_history.get_recent_context(chat_id, max_turns=2)
+        if not recent_context:
+            return False
+
+        # 使用 AI 快速判断
+        prompt = f"""请判断用户的新问题是否需要参考之前的对话历史。
+
+**最近的对话历史**：
+{recent_context}
+
+**用户的新问题**：
+{user_text}
+
+请回答 YES 或 NO：
+- YES: 如果用户在追问、引用、或继续讨论之前的话题
+- NO: 如果用户在问一个全新的、独立的问题
+
+只回答 YES 或 NO，不要有其他内容。"""
+
+        try:
+            messages = [
+                {"role": "system", "content": "你是一个对话分析助手，帮助判断用户是否需要历史对话上下文。"},
+                {"role": "user", "content": prompt}
+            ]
+
+            response = self.ai_client.call(
+                messages=messages,
+                model=self.openai_model,
+                temperature=0.1,
+                max_tokens=10
+            )
+
+            answer = response.strip().upper()
+            needs_history = answer.startswith("YES")
+
+            logger.info(f"AI 判断是否需要历史上下文: {answer} -> {needs_history}")
+            return needs_history
+
+        except Exception as e:
+            logger.error(f"AI 判断历史上下文失败: {e}", exc_info=True)
+            # 出错时默认不附带历史，避免影响正常功能
+            return False
 
     def _handle_start_command(self, chat_id: str, parts: List[MessagePart]) -> str:
         """处理 /start 命令，显示控制面板"""
@@ -257,9 +325,9 @@ class FinanceManagerBot(BaseBot):
         }
 
     def _build_ai_messages_with_context(
-        self, parts: List[MessagePart], user_id: Optional[str]
+        self, parts: List[MessagePart], user_id: Optional[str], chat_id: str = None
     ) -> List[Dict[str, Any]]:
-        """构建 AI 消息（包含用户财务上下文）"""
+        """构建 AI 消息（包含用户财务上下文和历史记录）"""
         content: List[Dict[str, Any]] = []
 
         # 处理文字和图片
@@ -379,10 +447,20 @@ class FinanceManagerBot(BaseBot):
             except Exception as e:
                 logger.warning(f"获取用户上下文失败: {e}")
 
-        return [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": content},
-        ]
+        # 构建消息列表
+        messages = [{"role": "system", "content": system_prompt}]
+
+        # 如果需要历史上下文，添加历史记录
+        if chat_id and self.chat_history.has_history(chat_id):
+            history = self.chat_history.get_history(chat_id, max_messages=6)  # 最多3轮对话
+            if history:
+                logger.info(f"附带 {len(history)} 条历史记录")
+                messages.extend(history)
+
+        # 添加当前用户消息
+        messages.append({"role": "user", "content": content})
+
+        return messages
 
     def _build_ai_messages(self, parts: List[MessagePart]) -> List[Dict[str, Any]]:
         """构建 AI 消息"""
@@ -928,22 +1006,26 @@ class FinanceManagerBot(BaseBot):
             elif action == "edit_budget":
                 # 编辑预算计划 - 返回使用说明
                 self._send_feature_guide(chat_id, "edit_budget")
-                return {"toast": {"type": "success", "content": "已发送使用说明"}}
+                # 不返回toast,避免框架再发送一条通知消息
+                return {}
 
             elif action == "financial_query":
                 # 财务询问 - 返回使用说明
                 self._send_feature_guide(chat_id, "financial_query")
-                return {"toast": {"type": "success", "content": "已发送使用说明"}}
+                # 不返回toast,避免框架再发送一条通知消息
+                return {}
 
             elif action == "record_expense":
                 # 记录消费 - 返回使用说明
                 self._send_feature_guide(chat_id, "record_expense")
-                return {"toast": {"type": "success", "content": "已发送使用说明"}}
+                # 不返回toast,避免框架再发送一条通知消息
+                return {}
 
             elif action == "debt_management":
                 # 负债管理 - 返回使用说明
                 self._send_feature_guide(chat_id, "debt_management")
-                return {"toast": {"type": "success", "content": "已发送使用说明"}}
+                # 不返回toast,避免框架再发送一条通知消息
+                return {}
 
             else:
                 return {
