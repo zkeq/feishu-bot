@@ -167,7 +167,9 @@ class FinanceManagerBot(BaseBot):
 
     def _needs_history_context(self, user_text: str, chat_id: str) -> bool:
         """
-        使用 AI 判断用户的问题是否需要历史对话上下文
+        判断用户的问题是否需要历史对话上下文
+
+        使用关键词检测 + AI 判断的混合策略
 
         Args:
             user_text: 用户输入的文本
@@ -178,14 +180,34 @@ class FinanceManagerBot(BaseBot):
         """
         # 如果没有历史记录，不需要
         if not self.chat_history.has_history(chat_id):
+            logger.info("没有历史记录，不需要上下文")
             return False
 
         # 获取最近的对话摘要
         recent_context = self.chat_history.get_recent_context(chat_id, max_turns=2)
         if not recent_context:
+            logger.info("无法获取最近对话摘要，不需要上下文")
             return False
 
-        # 使用 AI 快速判断
+        # 1. 关键词检测：如果包含明显的追问词汇，直接返回 True
+        follow_up_keywords = [
+            "那如果", "那么", "那", "如果", "那样的话", "这样的话",
+            "继续", "还有", "另外", "那个", "这个", "刚才", "之前",
+            "上面", "前面", "你说的", "你提到", "你刚说", "呢", "吗"
+        ]
+
+        user_text_lower = user_text.lower()
+        for keyword in follow_up_keywords:
+            if keyword in user_text_lower:
+                logger.info(f"检测到追问关键词 '{keyword}'，需要历史上下文")
+                return True
+
+        # 2. 如果用户输入很短（少于10个字），且不是完整的问句，可能是追问
+        if len(user_text) < 10 and not any(q in user_text for q in ["什么", "怎么", "如何", "为什么", "哪里", "谁"]):
+            logger.info(f"用户输入较短且不是完整问句，可能是追问: '{user_text}'")
+            return True
+
+        # 3. 使用 AI 快速判断
         prompt = f"""请判断用户的新问题是否需要参考之前的对话历史。
 
 **最近的对话历史**：
@@ -197,6 +219,12 @@ class FinanceManagerBot(BaseBot):
 请回答 YES 或 NO：
 - YES: 如果用户在追问、引用、或继续讨论之前的话题
 - NO: 如果用户在问一个全新的、独立的问题
+
+示例：
+- "那如果我才工作两年时间呢？" -> YES（追问）
+- "帮我分析一下我的财务状况" -> NO（新问题）
+- "那个账户是什么意思？" -> YES（引用）
+- "我想记录一笔消费" -> NO（新问题）
 
 只回答 YES 或 NO，不要有其他内容。"""
 
@@ -216,13 +244,14 @@ class FinanceManagerBot(BaseBot):
             answer = response.strip().upper()
             needs_history = answer.startswith("YES")
 
-            logger.info(f"AI 判断是否需要历史上下文: {answer} -> {needs_history}")
+            logger.info(f"AI 判断是否需要历史上下文: 用户输入='{user_text[:50]}', AI回答={answer}, 结果={needs_history}")
             return needs_history
 
         except Exception as e:
             logger.error(f"AI 判断历史上下文失败: {e}", exc_info=True)
-            # 出错时默认不附带历史，避免影响正常功能
-            return False
+            # 出错时默认附带历史，避免丢失上下文
+            logger.info("AI判断失败，默认附带历史上下文")
+            return True
 
     def _handle_start_command(self, chat_id: str, parts: List[MessagePart]) -> str:
         """处理 /start 命令，显示控制面板"""
