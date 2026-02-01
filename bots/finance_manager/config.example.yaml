@@ -127,9 +127,16 @@ system_prompt: |
     "time": "2026-01-31 12:30",
     "payment_method": "支付宝",
     "category": "餐饮",
-    "budget_type": "可变支出"
+    "budget_type": "可变支出",
+    "notes": "巨无霸套餐，加大薯条"
   }
   ```
+
+  **备注字段说明**：
+  - 记录商品名称、规格、口味等详细信息
+  - 如果用户提到特殊要求（微辣、加冰、去糖等），也要记录
+  - 保持简洁，突出关键信息
+  - 示例：\"羊肉孜然味锅盔，微辣的\"、\"星巴克美式咖啡，大杯\"
 
   **场景E：还款记录**
   ```json
@@ -244,7 +251,7 @@ batch:
 # 多维表格配置（可选）
 bitable:
   enabled: true
-  app_token: "TOb2bbzLrane2jsJl11crakMnMd"  # 需要替换为实际的 app_token
+  app_token: "tblZZZZZZZZZZZZZZZZ"  # 需要替换为实际的 app_token
 
   # 财务账户表
   accounts_table:
@@ -288,7 +295,7 @@ bitable:
 
   # 债务分期表
   debt_table:
-    table_id: "tbl1Mfmn0XMzmpT5"  # 需要替换为实际的 table_id
+    table_id: "tblZZZZZZZZZZZZZZZZ"  # 需要替换为实际的 table_id
     fields:
       user_id: "用户ID"
       debt_type: "债务类型"
