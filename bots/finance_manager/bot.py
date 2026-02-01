@@ -107,11 +107,20 @@ class FinanceManagerBot(BaseBot):
             # 6. 生成交互式卡片（包含确认按钮）
             card = self._build_interactive_card(ai_response, json_data, user_id)
 
-            # 6. 更新状态消息为最终结果
+            # 7. 更新状态消息为最终结果
             if status_msg_id:
                 self.client.update_message(status_msg_id, card)
             else:
                 self.client.send_message(chat_id, card, msg_type="interactive")
+
+            # 8. 自动附加财务控制面板（如果有用户数据）
+            if user_id and self.bitable_manager:
+                try:
+                    home_card = self._build_home_card_for_user(user_id)
+                    self.client.send_message(chat_id, home_card, msg_type="interactive")
+                    logger.info(f"已自动发送财务控制面板")
+                except Exception as e:
+                    logger.error(f"发送财务控制面板失败: {e}", exc_info=True)
 
             return "已发送财务分析结果"
 
