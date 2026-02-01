@@ -576,6 +576,88 @@ class FinanceManagerBot(BaseBot):
             logger.error(f"提取 JSON 数据失败: {e}")
             return None
 
+    def _generate_operation_description(self, action: str, json_data: Dict[str, Any]) -> str:
+        """生成操作描述，说明点击按钮后将执行的操作"""
+        try:
+            if action == "update_accounts":
+                # 列出将要创建/更新的账户和债务
+                accounts = json_data.get("accounts", [])
+                debts = json_data.get("debts", [])
+
+                desc = "📋 **点击保存后将执行以下操作：**\n\n"
+
+                if accounts:
+                    desc += f"1. 更新 {len(accounts)} 个账户信息\n"
+                    for acc in accounts:
+                        balance = acc.get('balance', 0)
+                        desc += f"   • {acc.get('name', '')} ({acc.get('type', '')}): {balance}元\n"
+
+                if debts:
+                    step_num = 2 if accounts else 1
+                    desc += f"{step_num}. 更新 {len(debts)} 个债务信息\n"
+                    for debt in debts:
+                        total_amount = debt.get('total_amount', 0)
+                        desc += f"   • {debt.get('name', '')}: {total_amount}元\n"
+
+                return desc
+
+            elif action == "create_budget":
+                # 列出将要创建的预算项目
+                budget_items = json_data.get("budget_items", [])
+                desc = "📋 **点击保存后将执行以下操作：**\n\n"
+                desc += f"1. 创建本月预算计划（共 {len(budget_items)} 项）\n"
+
+                # 按类型分组
+                income = [b for b in budget_items if b.get('type') == '收入']
+                fixed = [b for b in budget_items if b.get('type') == '固定支出']
+                variable = [b for b in budget_items if b.get('type') == '可变支出']
+
+                if income:
+                    total_income = sum(b.get('amount', 0) for b in income)
+                    desc += f"   📈 收入: {total_income}元\n"
+                if fixed:
+                    total_fixed = sum(b.get('amount', 0) for b in fixed)
+                    desc += f"   🏠 固定支出: {total_fixed}元\n"
+                if variable:
+                    total_variable = sum(b.get('amount', 0) for b in variable)
+                    desc += f"   💰 可变支出: {total_variable}元\n"
+
+                return desc
+
+            elif action == "record_expense":
+                # 描述消费记录和相关更新
+                amount = json_data.get("amount", 0)
+                merchant = json_data.get("merchant", "")
+                payment_method = json_data.get("payment_method", "")
+
+                desc = "📋 **点击保存后将执行以下操作：**\n\n"
+                desc += f"1. 记录消费: {merchant} {amount}元\n"
+                desc += f"2. 更新支付账户余额（{payment_method}）\n"
+                desc += f"3. 更新本月预算执行情况\n"
+                if json_data.get("image_key"):
+                    desc += f"4. 上传收据图片到多维表格\n"
+
+                return desc
+
+            elif action == "repay_debt":
+                # 描述还款操作
+                debt_name = json_data.get("debt_name", "")
+                amount = json_data.get("amount", 0)
+
+                desc = "📋 **点击保存后将执行以下操作：**\n\n"
+                desc += f"1. 记录还款: {debt_name} {amount}元\n"
+                desc += f"2. 更新债务已还金额\n"
+                desc += f"3. 更新债务当前期数\n"
+                desc += f"4. 检查债务是否已结清\n"
+
+                return desc
+
+            return ""
+
+        except Exception as e:
+            logger.error(f"生成操作描述失败: {e}")
+            return ""
+
     def _build_interactive_card(
         self, ai_response: str, json_data: Optional[Dict[str, Any]], user_id: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -604,6 +686,22 @@ class FinanceManagerBot(BaseBot):
 
             # 为需要确认的操作添加按钮
             if action in ["update_accounts", "create_budget", "record_expense", "repay_debt"]:
+                # 生成操作描述
+                operation_desc = self._generate_operation_description(action, json_data)
+
+                if operation_desc:
+                    # 添加分隔线
+                    card["elements"].append({"tag": "hr"})
+
+                    # 添加操作描述
+                    card["elements"].append({
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": operation_desc
+                        }
+                    })
+
                 action_buttons = []
 
                 # 添加确认保存按钮
