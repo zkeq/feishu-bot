@@ -59,6 +59,11 @@ class BotInstance:
         self._dedup_lock = threading.Lock()
         self._dedup_expire_seconds = 600  # 10分钟过期
 
+        # 卡片交互去重：记录最近处理过的 action_id
+        self._processed_actions: Dict[str, float] = {}
+        self._action_dedup_lock = threading.Lock()
+        self._action_dedup_expire_seconds = 60  # 1分钟过期（卡片交互通常更快）
+
         logger.info(f"BotInstance 创建: {bot_name} ({bot.name})")
 
     def handle_message_receive(self, data: lark.im.v1.P2ImMessageReceiveV1) -> None:
@@ -161,6 +166,26 @@ class BotInstance:
         with self._dedup_lock:
             self._processed_messages[message_id] = time.time()
 
+    def _is_duplicate_action(self, action_id: str) -> bool:
+        """检查卡片交互是否已处理过"""
+        with self._action_dedup_lock:
+            # 清理过期的交互记录
+            current_time = time.time()
+            expired_ids = [
+                aid for aid, timestamp in self._processed_actions.items()
+                if current_time - timestamp > self._action_dedup_expire_seconds
+            ]
+            for aid in expired_ids:
+                del self._processed_actions[aid]
+
+            # 检查是否重复
+            return action_id in self._processed_actions
+
+    def _mark_action_processed(self, action_id: str) -> None:
+        """标记卡片交互已处理"""
+        with self._action_dedup_lock:
+            self._processed_actions[action_id] = time.time()
+
     def _handle_batch(self, chat_id: str, parts: List[MessagePart], status_msg_id: Optional[str]) -> None:
         """处理批量消息"""
         logger.info(f"[{self.bot_name}] ========== 开始处理批量消息 ==========")
@@ -241,6 +266,17 @@ class BotInstance:
                 operator = data.event.operator
                 if hasattr(operator, 'user_id'):
                     user_id = operator.user_id
+
+            # 卡片交互去重检查
+            # 使用 message_id + action_value + user_id 作为唯一标识
+            action_id = f"{message_id}_{json.dumps(action_value, sort_keys=True)}_{user_id}"
+            if self._is_duplicate_action(action_id):
+                logger.warning(f"[{self.bot_name}] 检测到重复的卡片交互，跳过处理: action_id={action_id[:100]}...")
+                # 返回一个空响应，不显示任何提示
+                response = P2CardActionTriggerResponse()
+                return response
+            self._mark_action_processed(action_id)
+            logger.info(f"[{self.bot_name}] 卡片交互已标记为处理中")
 
             # 检查 Bot 是否有自定义的 handle_card_action 方法
             if hasattr(self.bot, 'handle_card_action') and callable(getattr(self.bot, 'handle_card_action')):
