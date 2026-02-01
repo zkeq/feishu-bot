@@ -14,6 +14,7 @@ from core.client import FeishuClient
 from core.batcher import MessagePart
 from core.ai_client import AIClient
 from core.utils import preprocess_markdown_for_feishu
+from core.chat_history_manager import ChatHistoryManager
 
 from .parsers.natural_language_parser import NaturalLanguageParser
 from .managers.bitable_manager import BitableManager
@@ -59,6 +60,9 @@ class FinanceManagerBot(BaseBot):
         # 初始化卡片生成器
         self.card_generator = FinancialCardGenerator()
 
+        # 初始化对话历史管理器
+        self.chat_history = ChatHistoryManager(max_messages_per_chat=20, expire_seconds=3600)
+
         logger.info(f"财务管理机器人初始化完成: {self.name}")
 
     def process_messages(
@@ -83,17 +87,27 @@ class FinanceManagerBot(BaseBot):
             # 获取用户 ID
             user_id = self._get_user_id(parts)
 
-            # 1. 构建 AI 消息（包含上下文）
-            messages = self._build_ai_messages_with_context(parts, user_id)
+            # 获取用户输入的文本
+            user_text = self._extract_user_text(parts)
+
+            # 1. 构建 AI 消息（包含上下文和历史记录）
+            messages = self._build_ai_messages_with_context(parts, user_id, chat_id)
 
             # 2. 调用 AI 分析
             self._update_status(chat_id, status_msg_id, "**🤖 正在分析您的财务信息...**")
             ai_response = self._call_ai_streaming(chat_id, messages, status_msg_id)
 
-            # 3. 提取 JSON 数据
+            # 3. 保存对话历史
+            if user_text:
+                self.chat_history.add_message(chat_id, "user", user_text)
+            # 移除 JSON 代码块后保存 AI 回复
+            clean_response = re.sub(r'```json[\s\S]*?```', '', ai_response).strip()
+            self.chat_history.add_message(chat_id, "assistant", clean_response)
+
+            # 4. 提取 JSON 数据
             json_data = self._extract_json_data(ai_response)
 
-            # 4. 提取图片信息（如果有）
+            # 5. 提取图片信息（如果有）
             if json_data:
                 images = [part for part in parts if part.kind == "image" and part.image_key]
                 if images:
@@ -101,26 +115,17 @@ class FinanceManagerBot(BaseBot):
                     json_data["image_message_id"] = images[0].message_id
                     logger.info(f"检测到图片: image_key={images[0].image_key}")
 
-            # 5. 不自动保存数据，而是通过按钮让用户确认
+            # 6. 不自动保存数据，而是通过按钮让用户确认
             # 敏感操作需要用户手动确认
 
-            # 6. 生成交互式卡片（包含确认按钮）
+            # 7. 生成交互式卡片（包含确认按钮）
             card = self._build_interactive_card(ai_response, json_data, user_id)
 
-            # 7. 更新状态消息为最终结果
+            # 8. 更新状态消息为最终结果
             if status_msg_id:
                 self.client.update_message(status_msg_id, card)
             else:
                 self.client.send_message(chat_id, card, msg_type="interactive")
-
-            # 8. 自动附加财务控制面板（如果有用户数据）
-            if user_id and self.bitable_manager:
-                try:
-                    home_card = self._build_home_card_for_user(user_id)
-                    self.client.send_message(chat_id, home_card, msg_type="interactive")
-                    logger.info(f"已自动发送财务控制面板")
-                except Exception as e:
-                    logger.error(f"发送财务控制面板失败: {e}", exc_info=True)
 
             return "已发送财务分析结果"
 
@@ -142,6 +147,14 @@ class FinanceManagerBot(BaseBot):
             if part.sender_id:
                 return part.sender_id
         return None
+
+    def _extract_user_text(self, parts: List[MessagePart]) -> str:
+        """提取用户输入的文本"""
+        texts = []
+        for part in parts:
+            if part.kind == "text" and part.text:
+                texts.append(part.text)
+        return " ".join(texts)
 
     def _handle_start_command(self, chat_id: str, parts: List[MessagePart]) -> str:
         """处理 /start 命令，显示控制面板"""

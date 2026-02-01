@@ -268,8 +268,17 @@ class BotInstance:
                     user_id = operator.user_id
 
             # 卡片交互去重检查
-            # 使用 message_id + action_value + user_id 作为唯一标识
-            action_id = f"{message_id}_{json.dumps(action_value, sort_keys=True)}_{user_id}"
+            # 对于某些操作（如刷新、查看详情），使用 chat_id + action 来去重
+            # 对于其他操作，使用 message_id + action_value + user_id
+            action_type = action_value.get("action", "") if isinstance(action_value, dict) else ""
+
+            # 刷新、查看类操作使用简化的去重键（避免 message_id 变化导致去重失效）
+            if action_type in ["refresh", "view_details", "view_accounts", "view_debts", "get_advice"]:
+                action_id = f"{chat_id}_{action_type}_{user_id}"
+            else:
+                # 其他操作使用完整的去重键
+                action_id = f"{message_id}_{json.dumps(action_value, sort_keys=True)}_{user_id}"
+
             if self._is_duplicate_action(action_id):
                 logger.warning(f"[{self.bot_name}] 检测到重复的卡片交互，跳过处理: action_id={action_id[:100]}...")
                 # 返回一个空响应，不显示任何提示
